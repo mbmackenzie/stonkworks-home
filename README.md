@@ -1,1 +1,49 @@
-# stonkworks-home
+# STONKWORKS HOME
+
+Local-first household devices and services. Initial extraction: Sonos Desk's
+FastAPI/SoCo backend, browser controller, and Pillow display renderer.
+
+## Structure
+
+- `services/sonos-desk/`: source, Dockerfile, pinned dependencies, and tests.
+- `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example.
+- `docs/sonos-desk.md`: HTTP API, rendering, and development instructions.
+
+Home management, MQTT contracts, and firmware are planned, not implemented.
+Add their directories when their first implementation is ready. Existing
+household applications remain outside this project.
+
+## Run from source
+
+Copy `deploy/stacks/sonos-desk/.env.example` to `.env` in the same directory
+and replace its documentation address with this host's trusted LAN IPv4 address.
+Then run from the repository root:
+
+```sh
+docker compose -f deploy/stacks/sonos-desk/compose.yaml config --quiet
+docker compose -f deploy/stacks/sonos-desk/compose.yaml up -d --build
+```
+
+Open `http://<LAN-IP>:8008/`. The API has no authentication: use a trusted LAN.
+Linux host networking supports SSDP discovery. No persistent volume is needed.
+The image alone defaults to loopback; Compose explicitly sets the LAN listener.
+Keep one worker to preserve shared command locks and caches.
+
+## Development
+
+```sh
+uv sync --all-packages --locked
+uv run --package sonos-desk pytest -q
+```
+
+Tests use simulated speakers and do not control household devices.
+
+Run locally with `uv run --package sonos-desk sonos-desk`, which listens on
+`http://127.0.0.1:8008/`. Build the image from the repository root with
+`docker build -f services/sonos-desk/Dockerfile -t stonkworks/sonos-desk:local .`.
+
+## Distribution status
+
+This is a local source extraction. No registry release or firmware is published.
+License selection and publication are pending; no open-source license is granted
+yet. Household deployment definitions remain in their installation repository.

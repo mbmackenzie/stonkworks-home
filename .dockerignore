@@ -1,0 +1,13 @@
+*
+!pyproject.toml
+!uv.lock
+!services/
+services/*
+!services/sonos-desk/
+services/sonos-desk/*
+!services/sonos-desk/pyproject.toml
+!services/sonos-desk/README.md
+!services/sonos-desk/src/
+!services/sonos-desk/src/**
+**/__pycache__/
+**/*.pyc

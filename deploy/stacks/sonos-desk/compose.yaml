@@ -1,0 +1,26 @@
+services:
+  sonos-desk:
+    image: stonkworks/sonos-desk:local
+    build:
+      context: ../../..
+      dockerfile: services/sonos-desk/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SONOS_INTERFACE: "${SONOS_INTERFACE:?Set SONOS_INTERFACE to this host's trusted LAN IPv4 address}"
+    command: ["uvicorn", "sonos_desk.app:app", "--host", "${SONOS_INTERFACE:?Set SONOS_INTERFACE}", "--port", "8008", "--workers", "1", "--no-proxy-headers"]
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os, urllib.request; urllib.request.urlopen('http://' + os.environ['SONOS_INTERFACE'] + ':8008/health', timeout=3).close()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
