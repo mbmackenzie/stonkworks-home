@@ -1,0 +1,28 @@
+[project]
+name = "stonkworks-home"
+version = "0.1.0"
+description = "Local-first household devices and services"
+readme = "README.md"
+authors = [
+    { name = "Matt Mackenzie", email = "mbm2228@columbia.edu" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "fastapi[standard]>=0.143.3",
+    "prek>=0.5.5",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.1",
+    "ty>=0.0.89",
+]
+
+[tool.uv.workspace]
+members = [
+    "services/sonos-desk",
+]
+
+[tool.ruff]
+line-length = 120

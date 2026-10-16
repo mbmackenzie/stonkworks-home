@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonos Desk</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #202020; background: #ecece8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 20px; }
+    main { max-width: 848px; margin: auto; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -.5px; }
+    .subtitle, .hint { color: #62625c; font-size: 13px; margin: 0; }
+    label { font-size: 13px; }
+    select { font: inherit; padding: 9px 28px 9px 12px; border: 1px solid #bdbdb5; border-radius: 8px; background: white; max-width: 220px; }
+    .screen { border: 1px solid #cecec6; background: white; padding: 23px; box-shadow: 0 8px 32px #0000000a; border-radius: 14px; }
+    #frame { display: block; width: 100%; aspect-ratio: 5 / 3; height: auto; background: white; object-fit: contain; }
+    .controls { display: flex; justify-content: space-between; align-items: center; gap: 26px; margin: 24px 0 14px; padding: 0 24px; }
+    .playback { display: flex; align-items: center; gap: 14px; }
+    button { font: inherit; color: inherit; border: 1px solid #c7c7bd; background: #f8f8f4; cursor: pointer; touch-action: manipulation; }
+    button:hover { background: white; }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: wait; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #555; outline-offset: 4px; }
+    .transport { border-radius: 50%; width: 52px; height: 52px; display: grid; place-items: center; }
+    #play-pause { width: 64px; height: 64px; background: #202020; color: white; border-color: #202020; }
+    svg { width: 22px; height: 22px; fill: currentColor; }
+    .volume-group { flex: 1; max-width: 310px; min-width: 0; }
+    .volume-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+    #volume-number { font-variant-numeric: tabular-nums; }
+    .volume-row { display: flex; align-items: center; gap: 12px; }
+    .step { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 50%; font-size: 21px; }
+    #volume { width: 100%; min-width: 0; accent-color: #202020; cursor: ew-resize; }
+    #mute { padding: 4px 8px; border-radius: 5px; font-size: 12px; }
+    #mute[aria-pressed="true"] { background: #202020; color: white; }
+    .status { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 12px; color: #62625c; padding: 0 24px; }
+    #message { min-height: 20px; margin: 14px 24px 0; font-size: 13px; color: #8a281b; }
+    .hint { margin: 15px 24px 0; line-height: 1.5; }
+    @media (max-width: 600px) {
+      body { padding: 20px 12px; }
+      header { align-items: flex-start; }
+      select { max-width: 160px; }
+      .screen { padding: 8px; border-radius: 9px; }
+      .controls { flex-direction: column; gap: 24px; padding: 0 8px; }
+      .volume-group { width: 100%; max-width: 320px; }
+      .status { padding: 0 8px; }
+      .hint, #message { margin-left: 8px; margin-right: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>Sonos Desk</h1><p class="subtitle">Desktop controller preview</p></div>
+      <label>Room <select id="room" aria-label="Room" disabled><option>Finding speakers…</option></select></label>
+    </header>
+    <div class="screen"><img id="frame" width="800" height="480" alt="Current Sonos e-ink display"></div>
+    <section class="controls" aria-label="Playback controls">
+      <div class="playback">
+        <button class="transport" id="previous" aria-label="Previous track" title="Previous track" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM19 5v14L9 12z"/></svg>
+        </button>
+        <button class="transport" id="play-pause" aria-label="Play or pause" title="Play or pause" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="transport" id="next" aria-label="Next track" title="Next track" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM5 5l10 7-10 7z"/></svg>
+        </button>
+      </div>
+      <div class="volume-group" id="encoder">
+        <div class="volume-heading">
+          <label for="volume">Volume <output id="volume-number" for="volume">—</output></label>
+          <button id="mute" aria-label="Mute" aria-pressed="false" disabled>Mute</button>
+        </div>
+        <div class="volume-row">
+          <button class="step" id="quieter" aria-label="Volume down" disabled>−</button>
+          <input id="volume" aria-label="Volume" type="range" min="0" max="100" step="1" value="0" disabled>
+          <button class="step" id="louder" aria-label="Volume up" disabled>+</button>
+        </div>
+      </div>
+    </section>
+    <div class="status"><span id="playback-status" role="status">Connecting…</span><span>800 × 480 · four-level grayscale</span></div>
+    <p id="message" role="alert"></p>
+    <p class="hint">Scroll over volume or use − / + to try the rotary encoder. The buttons below the image send the same controls as the hardware.</p>
+  </main>
+  <script>
+    'use strict';
+    const byId = id => document.getElementById(id);
+    const room = byId('room'), picture = byId('frame'), volume = byId('volume');
+    const controls = [...document.querySelectorAll('.controls button, .controls input')];
+    let state = null, etag = '', objectUrl = '', epoch = 0, revision = 0, refreshing = false;
+    let queue = Promise.resolve(), pending = 0, ready = false;
+    let wheelDelta = 0, wheelTimer = null, changingVolume = false;
+
+    async function json(url, options) {
+      const response = await fetch(url, {cache: 'no-store', signal: AbortSignal.timeout(15000), ...options});
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof body.detail === 'string' ? body.detail : 'Request failed. Try reading the room again.');
+      }
+      return body;
+    }
+
+    function enabled() {
+      room.disabled = pending > 0 || !room.options.length;
+      controls.forEach(control => { control.disabled = !ready || pending > 0; });
+    }
+
+    function showState(value) {
+      state = value;
+      if (!changingVolume) {
+        volume.value = value.volume;
+        byId('volume-number').textContent = value.volume + '%';
+      }
+      byId('mute').setAttribute('aria-pressed', String(value.mute));
+      byId('mute').textContent = value.mute ? 'Unmute' : 'Mute';
+      byId('mute').setAttribute('aria-label', value.mute ? 'Unmute' : 'Mute');
+      const playing = value.playback_state === 'PLAYING';
+      byId('play-icon').setAttribute('d', playing ? 'M6 5h4v14H6zM14 5h4v14h-4z' : 'M8 5v14l11-7z');
+      byId('play-pause').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+      byId('playback-status').textContent = value.room + ' · ' + value.playback_state.replaceAll('_', ' ').toLowerCase();
+    }
+
+    async function loadFrame(selected, generation, version) {
+      const headers = etag ? {'If-None-Match': etag} : {};
+      const response = await fetch('/frame?room=' + encodeURIComponent(selected),
+        {headers, cache: 'no-store', signal: AbortSignal.timeout(15000)});
+      if (response.status === 304) return;
+      if (!response.ok) throw new Error('Display unavailable. Checking again shortly.');
+      const blob = await response.blob();
+      if (generation !== epoch || version !== revision) return;
+      const nextUrl = URL.createObjectURL(blob);
+      const oldUrl = objectUrl;
+      objectUrl = nextUrl;
+      etag = response.headers.get('ETag') || '';
+      picture.src = nextUrl;
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+    }
+
+    async function refresh(clearError = true) {
+      if (!room.value || refreshing || pending) return;
+      refreshing = true;
+      const generation = epoch, version = revision, selected = room.value;
+      try {
+        const value = await json('/state?room=' + encodeURIComponent(selected));
+        if (generation !== epoch || version !== revision) return;
+        showState(value);
+        ready = true;
+        enabled();
+        await loadFrame(selected, generation, version);
+        if (clearError && generation === epoch && version === revision) byId('message').textContent = '';
+      } catch (error) {
+        if (generation === epoch && version === revision) {
+          byId('message').textContent = error.message;
+          byId('playback-status').textContent = 'Connection unavailable · showing last display';
+          ready = false;
+          enabled();
+        }
+      } finally {
+        refreshing = false;
+        if (generation !== epoch || version !== revision) void refresh(false);
+      }
+    }
+
+    function command(action, value) {
+      if (!ready) return;
+      const selected = room.value, generation = epoch;
+      revision++;
+      pending++;
+      enabled();
+      queue = queue.then(async () => {
+        if (generation !== epoch) return;
+        const payload = {room: selected, command: action};
+        if (value !== undefined) payload.value = value;
+        try {
+          const result = await json('/command', {method: 'POST',
+            headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+          if (generation === epoch) { showState(result); byId('message').textContent = ''; }
+        } catch (error) {
+          byId('message').textContent = error.message + ' Check state before repeating the control.';
+        }
+      }).finally(async () => {
+        pending--;
+        enabled();
+        if (!pending) {
+          await refresh(false);
+          // Sonos may acknowledge play/skip while still TRANSITIONING.
+          setTimeout(() => { void refresh(false); }, 1200);
+        }
+      });
+    }
+
+    byId('previous').onclick = () => command('previous');
+    byId('play-pause').onclick = () => command('play_pause');
+    byId('next').onclick = () => command('next');
+    byId('quieter').onclick = () => command('volume_relative', -1);
+    byId('louder').onclick = () => command('volume_relative', 1);
+    byId('mute').onclick = () => { if (state) command('mute', !state.mute); };
+    volume.oninput = () => { changingVolume = true; byId('volume-number').textContent = volume.value + '%'; };
+    volume.onchange = () => { changingVolume = false; command('volume', Number(volume.value)); };
+    volume.onblur = () => { changingVolume = false; };
+    byId('encoder').addEventListener('wheel', event => {
+      if (!ready || event.ctrlKey || !event.deltaY) return;
+      event.preventDefault();
+      wheelDelta = Math.max(-100, Math.min(100, wheelDelta + (event.deltaY < 0 ? 1 : -1)));
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        const delta = wheelDelta;
+        wheelDelta = 0;
+        if (delta) command('volume_relative', delta);
+      }, 100);
+    }, {passive: false});
+    room.onchange = () => {
+      epoch++;
+      state = null; etag = ''; ready = false;
+      wheelDelta = 0; clearTimeout(wheelTimer);
+      picture.removeAttribute('src');
+      byId('message').textContent = '';
+      enabled();
+      const url = new URL(location.href);
+      url.searchParams.set('room', room.value);
+      history.replaceState(null, '', url);
+      void refresh();
+    };
+
+    async function discover() {
+      try {
+        const rooms = await json('/rooms');
+        room.replaceChildren(...rooms.map(value => new Option(value.room, value.room_id)));
+        if (!rooms.length) throw new Error('No speakers found. Retrying discovery shortly.');
+        const requested = new URL(location.href).searchParams.get('room') || 'office';
+        const match = rooms.find(value => value.room_id === requested || value.room.toLowerCase() === requested.toLowerCase());
+        room.value = match ? match.room_id : rooms[0].room_id;
+        enabled();
+        await refresh();
+      } catch (error) {
+        byId('message').textContent = error.message;
+        setTimeout(discover, 5000);
+      }
+    }
+    setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 3000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+    void discover();
+  </script>
+</body>
+</html>

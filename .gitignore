@@ -1,0 +1,10 @@
+.DS_Store
+error.log
+
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+.env.*
+!.env.example
+*.pyc

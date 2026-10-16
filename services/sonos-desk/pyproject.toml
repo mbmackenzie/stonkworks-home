@@ -1,0 +1,23 @@
+[project]
+name = "sonos-desk"
+version = "0.1.0"
+description = "Local Sonos controls and server-rendered e-ink display frames"
+readme = "README.md"
+authors = [
+    { name = "Matt Mackenzie", email = "mbm2228@columbia.edu" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.143.3",
+    "httpx>=0.28.1",
+    "pillow>=12.3.0",
+    "soco>=0.32.0",
+    "uvicorn>=0.35.0",
+]
+
+[project.scripts]
+sonos-desk = "sonos_desk:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
