@@ -106,3 +106,49 @@ URLs. Image transfer requests uncompressed HTTP bodies.
 `GET /health` reports service liveness, discovered-room count, and whether the
 last discovery failed. It never queries speakers. Zero rooms is valid for
 service health; `/rooms` and `/state` establish actual Sonos availability.
+
+## Optional MQTT
+
+Sonos Desk can publish every discovered room and accept commands using MQTT 5.
+See the [v1 protocol](../protocols/v1/sonos-desk.md) for topics, schemas,
+freshness, command expiry, and uncertain outcomes. Frames remain on HTTP.
+MQTT is disabled unless `SONOS_MQTT_HOST` is configured. Broker outages do not
+stop HTTP. One application worker is still required.
+
+| Variable | Behavior |
+| --- | --- |
+| `SONOS_MQTT_HOST` | Broker hostname; unset disables MQTT |
+| `SONOS_MQTT_PORT` | 1883, or 8883 for TLS when running directly |
+| `SONOS_MQTT_USERNAME` | Required application account |
+| `SONOS_MQTT_PASSWORD_FILE` | Required UTF-8 password file; one trailing line ending removed |
+| `SONOS_MQTT_INSTANCE` | `main`; unique among services on the broker |
+| `SONOS_MQTT_POLL_INTERVAL` | Three seconds per room by default; positive finite number |
+| `SONOS_MQTT_TLS` | `true` or `false`; default false |
+| `SONOS_MQTT_CA_FILE` | Optional trusted CA file for TLS; system trust otherwise |
+
+Create a separate local password file readable by the service; do not commit
+it. Keep secrets outside the checkout and mount only the required application's
+password, not a broker-wide credential store. Plain TCP sends credentials and
+payloads without encryption; use it only on a trusted LAN. TLS always verifies
+hostname and certificate trust. Device credential provisioning is future work.
+
+For Compose, populate the optional MQTT values in your local `.env` and use:
+
+```sh
+docker compose -f deploy/stacks/sonos-desk/compose.yaml \
+  -f deploy/stacks/sonos-desk/compose.mqtt.yaml config --quiet
+```
+
+Use those same files with your normal stack installation workflow. The overlay
+mounts `SONOS_MQTT_PASSWORD_PATH` read-only at
+`/run/secrets/sonos-mqtt-password` and refuses to create a missing host path.
+The base Compose example needs no password file when MQTT is disabled. For TLS,
+set the overlay's explicit `SONOS_MQTT_PORT` to your TLS listener (usually 8883).
+For a private CA, add a read-only bind mount in your local override and point
+`SONOS_MQTT_CA_FILE` at its container path. Do not disable certificate checks.
+
+`GET /mqtt/status` returns cached `enabled`, `connected`, `service_session`,
+`last_connected_at`, `last_poll_completed_at`, `rooms_known`,
+`rooms_unavailable`, and sanitized `last_error`. Disabled state has false
+booleans, zero counters, and null session/times/error. No status request
+contacts speakers or the broker; `/health` keeps its existing liveness contract.

@@ -1,0 +1,18 @@
+# Optional overlay; use together with compose.yaml.
+services:
+  sonos-desk:
+    environment:
+      SONOS_MQTT_HOST: "${SONOS_MQTT_HOST:?Set the broker hostname}"
+      SONOS_MQTT_PORT: "${SONOS_MQTT_PORT:-1883}"
+      SONOS_MQTT_USERNAME: "${SONOS_MQTT_USERNAME:?Set the application account}"
+      SONOS_MQTT_PASSWORD_FILE: /run/secrets/sonos-mqtt-password
+      SONOS_MQTT_INSTANCE: "${SONOS_MQTT_INSTANCE:-main}"
+      SONOS_MQTT_POLL_INTERVAL: "${SONOS_MQTT_POLL_INTERVAL:-3}"
+      SONOS_MQTT_TLS: "${SONOS_MQTT_TLS:-false}"
+    volumes:
+      - type: bind
+        source: "${SONOS_MQTT_PASSWORD_PATH:?Set a local secret file}"
+        target: /run/secrets/sonos-mqtt-password
+        read_only: true
+        bind:
+          create_host_path: false

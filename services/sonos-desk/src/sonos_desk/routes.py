@@ -15,7 +15,7 @@ class Command(CommandFields):
     room: str = Field(min_length=1, max_length=256)
 
 
-def create_router(backend, renderer):
+def create_router(backend, renderer, mqtt_status):
     router = APIRouter()
 
     @router.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -26,6 +26,11 @@ def create_router(backend, renderer):
     @router.get("/health")
     def health():
         return backend.health()
+
+    @router.get("/mqtt/status")
+    def mqtt_status_route(response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return mqtt_status()
 
     @router.get("/rooms")
     def rooms(response: Response):
