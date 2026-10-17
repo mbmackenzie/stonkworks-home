@@ -8,14 +8,18 @@ from test_sonos import Speaker
 
 
 @pytest.fixture
-def setup():
+def setup(monkeypatch):
     speaker = Speaker("Office", "uid-office")
-    speaker.get_current_track_info = lambda: {
-        "title": speaker.title,
-        "artist": "Artist",
-        "album": "Album",
-        "album_art": "",
-    }
+    monkeypatch.setattr(
+        speaker,
+        "get_current_track_info",
+        lambda: {
+            "title": speaker.title,
+            "artist": "Artist",
+            "album": "Album",
+            "album_art": "",
+        },
+    )
     backend = SonosBackend(discover=lambda **kw: [speaker])
     with TestClient(create_app(backend, Renderer())) as client:
         yield client, speaker
@@ -105,12 +109,12 @@ def test_failed_state_read_after_command_does_not_repeat_mutation(setup):
     assert speaker.skips == 1
 
 
-def test_duplicate_room_and_unreachable_speaker():
+def test_duplicate_room_and_unreachable_speaker(monkeypatch):
     speakers = [Speaker("Office", "uid1"), Speaker("Office", "uid2")]
     backend = SonosBackend(discover=lambda **kw: speakers)
     with TestClient(create_app(backend, Renderer())) as client:
         assert client.get("/state?room=office").status_code == 409
-        speakers[0].get_current_track_info = lambda: (_ for _ in ()).throw(requests.Timeout())
+        monkeypatch.setattr(speakers[0], "get_current_track_info", lambda: (_ for _ in ()).throw(requests.Timeout()))
         assert client.get("/state?room=uid1").status_code == 503
 
 

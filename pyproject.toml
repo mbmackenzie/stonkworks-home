@@ -12,6 +12,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "fastapi[standard]>=0.143.3",
+    "jsonschema>=4.26,<5",
     "prek>=0.5.5",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",

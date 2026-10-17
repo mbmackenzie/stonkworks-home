@@ -11,7 +11,7 @@ from copy import deepcopy
 from importlib.resources import files
 from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect, sync_playwright  # ty: ignore[unresolved-import]
 
 BASE_STATE = {
     "room": "Office",

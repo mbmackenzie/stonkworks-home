@@ -8,9 +8,10 @@ from urllib.parse import urljoin
 
 import requests
 import soco
+import soco.config
 from soco.exceptions import NotSupportedException, SoCoException, SoCoUPnPException
 
-soco.config.REQUEST_TIMEOUT = 3
+soco.config.REQUEST_TIMEOUT = 3.0
 log = logging.getLogger(__name__)
 NETWORK_ERRORS = (requests.RequestException, SoCoException, OSError)
 

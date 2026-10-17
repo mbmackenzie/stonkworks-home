@@ -1,0 +1,419 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "command": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "enum": [
+            "play",
+            "pause",
+            "play_pause",
+            "next",
+            "previous",
+            "volume",
+            "volume_relative",
+            "mute"
+          ],
+          "title": "Command",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "client_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Client Id",
+          "type": "string"
+        },
+        "service_session": {
+          "format": "uuid",
+          "title": "Service Session",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "request_id",
+        "client_id",
+        "service_session"
+      ],
+      "title": "CommandRequest",
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "enum": [
+                  "play",
+                  "pause",
+                  "play_pause",
+                  "next",
+                  "previous"
+                ]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "mute"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "volume"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "volume_relative"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "integer",
+                "minimum": -100,
+                "maximum": 100
+              }
+            }
+          }
+        }
+      ]
+    },
+    "availability": {
+      "type": "object",
+      "properties": {
+        "service_session": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "enum": [
+            "online",
+            "offline"
+          ]
+        }
+      },
+      "required": [
+        "service_session",
+        "status"
+      ]
+    },
+    "inventory": {
+      "type": "object",
+      "properties": {
+        "service_session": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "discovery": {
+          "enum": [
+            "ok",
+            "degraded"
+          ]
+        },
+        "rooms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "room": {
+                "type": "string"
+              },
+              "room_id": {
+                "type": "string"
+              },
+              "ip": {
+                "type": "string"
+              },
+              "coordinator": {
+                "type": "string"
+              },
+              "coordinator_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "room",
+              "room_id",
+              "ip",
+              "coordinator",
+              "coordinator_id"
+            ]
+          }
+        }
+      },
+      "required": [
+        "service_session",
+        "observed_at",
+        "discovery",
+        "rooms"
+      ]
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "service_session": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string"
+            },
+            "room_id": {
+              "type": "string"
+            },
+            "coordinator": {
+              "type": "string"
+            },
+            "coordinator_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "artist": {
+              "type": "string"
+            },
+            "album": {
+              "type": "string"
+            },
+            "artwork_url": {
+              "type": "string"
+            },
+            "playback_state": {
+              "type": "string"
+            },
+            "duration": {
+              "type": "string"
+            },
+            "volume": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "mute": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "room",
+            "room_id",
+            "coordinator",
+            "coordinator_id",
+            "title",
+            "artist",
+            "album",
+            "artwork_url",
+            "playback_state",
+            "duration",
+            "volume",
+            "mute"
+          ]
+        }
+      },
+      "required": [
+        "service_session",
+        "observed_at",
+        "state"
+      ]
+    },
+    "room_availability": {
+      "type": "object",
+      "properties": {
+        "service_session": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "online",
+            "offline"
+          ]
+        }
+      },
+      "required": [
+        "service_session",
+        "observed_at",
+        "status"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "service_session": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "room_id": {
+          "type": "string"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "rejected",
+            "uncertain"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "state": {
+          "type": "object",
+          "properties": {
+            "room": {
+              "type": "string"
+            },
+            "room_id": {
+              "type": "string"
+            },
+            "coordinator": {
+              "type": "string"
+            },
+            "coordinator_id": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "artist": {
+              "type": "string"
+            },
+            "album": {
+              "type": "string"
+            },
+            "artwork_url": {
+              "type": "string"
+            },
+            "playback_state": {
+              "type": "string"
+            },
+            "duration": {
+              "type": "string"
+            },
+            "volume": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "mute": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "room",
+            "room_id",
+            "coordinator",
+            "coordinator_id",
+            "title",
+            "artist",
+            "album",
+            "artwork_url",
+            "playback_state",
+            "duration",
+            "volume",
+            "mute"
+          ]
+        }
+      },
+      "required": [
+        "service_session",
+        "client_id",
+        "request_id",
+        "room_id",
+        "completed_at",
+        "status",
+        "detail"
+      ]
+    }
+  }
+}
