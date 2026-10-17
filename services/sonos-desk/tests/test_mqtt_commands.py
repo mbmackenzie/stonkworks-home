@@ -203,3 +203,18 @@ def test_deeply_nested_json_is_dropped_without_disabling_commands(rig):
     processor.accept(message())
     assert processor.run_one()
     assert speaker.skips == 1
+
+
+def test_removed_id_cannot_fall_back_to_another_speakers_friendly_name(rig, monkeypatch):
+    processor, original, now, sent, message = rig
+    processor.backend.rooms()  # Cache the original speaker inventory at t=0.
+    replacement = Speaker("uid-o", "uid-b")
+    monkeypatch.setattr(processor.backend, "_discover", lambda **kw: [replacement])
+    now[0] = 61
+    processor.accept(message())  # Accepted against the last published ID set.
+    assert processor.run_one()
+    assert original.skips == 0 and replacement.skips == 0
+    assert results(sent)[-1]["status"] == "rejected"
+    # HTTP callers still intentionally support names.
+    processor.backend.command("uid-o", "next")
+    assert replacement.skips == 1

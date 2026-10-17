@@ -280,3 +280,30 @@ def test_broker_expires_offline_session_message(mqtt_broker, mqtt_probe):
     finally:
         client.disconnect()
         client.loop_stop()
+
+
+@pytest.mark.parametrize("withhold_pubacks", [False, True])
+def test_shutdown_retains_offline_even_without_application_pubacks(
+    service, mqtt_probe, wait_until, monkeypatch, withhold_pubacks
+):
+    from sonos_desk.mqtt.protocol import Publication
+
+    with mqtt_probe(service.base + "/#") as probe:
+        service.start()
+        probe.wait_for_message(service.base + "/rooms/uid-o/state")
+        if withhold_pubacks:
+            # Paho still completes its wire handshake; withhold only delivery
+            # to the adapter so its 20 transport slots remain occupied.
+            monkeypatch.setattr(service.clients[-1], "on_publish", lambda *args: None)
+            for n in range(20):
+                service.adapter.transport.publish(Publication(f"{service.base}/test/unacked/{n}", b"{}", True, 90))
+            wait_until(lambda: len(service.adapter.transport._inflight) == 20)
+        service.adapter.close()
+        offline = probe.wait_for_message(
+            service.base + "/availability", lambda m: json.loads(m.payload)["status"] == "offline"
+        )
+        assert json.loads(offline.payload)["service_session"] == service.adapter.session
+        assert service.adapter.transport._offline_acked.is_set() is not withhold_pubacks
+        with mqtt_probe(service.base + "/availability") as late:
+            retained = late.wait_for_message(service.base + "/availability")
+            assert retained.retain and json.loads(retained.payload)["status"] == "offline"

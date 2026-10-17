@@ -2,7 +2,8 @@
 
 Date: 2026-10-16
 
-Status: Approved by the user on 2026-10-16. Implementation has not started.
+Status: Approved by the user on 2026-10-16; implemented on `feat/sonos-mqtt`.
+No live deployment is included.
 
 ## Intent and success criteria
 

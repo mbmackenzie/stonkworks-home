@@ -134,7 +134,11 @@ class CommandProcessor:
             return True
         try:
             state = self.backend.command(
-                record.room_id, record.request.command, record.request.value, deadline=record.deadline
+                record.room_id,
+                record.request.command,
+                record.request.value,
+                deadline=record.deadline,
+                room_id_only=True,
             )
         except CommandExpired:
             self._finish(record, "rejected", "Command expired before speaker dispatch")

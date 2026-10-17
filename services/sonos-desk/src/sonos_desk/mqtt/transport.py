@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 import paho.mqtt.client as mqtt
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
+from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.subscribeoptions import SubscribeOptions
 
 from sonos_desk.mqtt.protocol import IncomingCommand, Publication, encode_payload
@@ -63,6 +64,7 @@ class MqttTransport:
             self._queue.clear()
             self._inflight.clear()
         self._failed.clear()
+        self._offline_acked.clear()
         client = self._factory(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"sonos-desk-{self.config.instance}",
@@ -126,10 +128,11 @@ class MqttTransport:
                 return
             with self._lock:
                 publication = self._inflight.pop(mid, None)
-            if publication and publication.topic == self.topics.availability and b'"offline"' in publication.payload:
-                self._offline_acked.set()
             if reason is not None and reason.is_failure:
                 self._failure("MQTT publication denied")
+                return
+            if publication and publication.topic == self.topics.availability and b'"offline"' in publication.payload:
+                self._offline_acked.set()
 
         client.on_connect, client.on_subscribe = on_connect, on_subscribe
         client.on_disconnect, client.on_message, client.on_publish = on_disconnect, on_message, on_publish
@@ -208,7 +211,15 @@ class MqttTransport:
             finally:
                 self._disconnected()
                 if client is not None:
-                    client.disconnect()
+                    # Normal disconnect suppresses the Will. Request it unless
+                    # offline availability was positively acknowledged.
+                    reason = ReasonCode(PacketTypes.DISCONNECT, identifier=0 if self._offline_acked.is_set() else 4)
+                    try:
+                        client.disconnect(reasoncode=reason)
+                    finally:
+                        sock = client.socket()
+                        if sock is not None:
+                            sock.close()
                     # The discarded client never resumes its outgoing messages.
             if not self._stop.is_set():
                 self._stop.wait(self._retry_delay(attempt))

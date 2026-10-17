@@ -219,3 +219,27 @@ any remaining limitations; source completion does not authorize deployment.
 - [Paho package release](https://pypi.org/project/paho-mqtt/): 2.1.0 is the current published version checked on 2026-10-16; execution must verify the resolved lockfile on Python 3.13+.
 - [Paho Client API](https://eclipse.dev/paho/files/paho.mqtt.python/html/client.html): MQTT 5 properties, subscription options, callback v2, publication limits, manual network loop, and outgoing-message retention across reconnects. Replacing a client avoids replaying its old outgoing queue.
 - [MQTT 5 specification](https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html): retain flags, session expiry, message expiry, and transport acknowledgment semantics.
+
+## Execution record
+
+Implemented inline on `feat/sonos-mqtt` in `/tmp/stonkworks-sonos-mqtt`.
+Final Python 3.13 verification: 141 regular tests passed (13 broker tests
+skipped without opt-in), 13 disposable-broker checks passed, and Ruff lint,
+format, ty, hooks, and both Compose configurations passed. Core checks also
+passed on Python 3.14 before the final review fixes. The existing Starlette
+TestClient/httpx deprecation warning remains.
+
+The independent review found two important issues, both reproduced by failing
+tests and fixed: stable speaker-ID enforcement at backend dispatch/read time,
+and preserving offline availability when shutdown publications are not
+acknowledged. Additional broker checks cover the latter with withheld PUBACKs.
+One minor documentation item is deferred: deployment instructions do not state
+the image's UID/GID 10001 explicitly for password/custom-CA readability.
+
+Execution decisions: use a temporary worktree to preserve the user's dirty
+`.gitignore`; use installed executables for pure sandbox tests and escalated
+uv for HTTP/Docker checks; fix existing optional-tool/test-double type errors
+without requiring Playwright; explicitly map the disposable broker's chosen
+loopback port to keep it stable across restarts. The last decision has a small
+port-allocation race that causes a visible test startup failure if occupied.
+No household stack, credentials, playback, or volume was changed.

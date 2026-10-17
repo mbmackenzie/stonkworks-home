@@ -145,3 +145,23 @@ def test_no_missed_poll_backlog_and_forced_room_first(rig):
     poller.force_refresh("uid-k")
     assert poller.poll_one()
     assert observations(sent, "/state")[0]["state"]["room_id"] == "uid-k"
+
+
+def test_room_observation_cannot_switch_to_name_after_discovery_changes(rig, monkeypatch):
+    poller, _speakers, now, sent, _ = rig
+    drain(poller)
+    original_state = poller.backend.state
+    replacement = Speaker("uid-o", "uid-b")
+
+    def changed_inventory(room, *args, **kwargs):
+        if room == "uid-o":
+            poller.backend._inventory_at = float("-inf")
+            poller.backend._discover = lambda **kw: [replacement]
+        return original_state(room, *args, **kwargs)
+
+    monkeypatch.setattr(poller.backend, "state", changed_inventory)
+    now[0] = 3
+    drain(poller)
+    states = observations(sent, "/uid-o/state")
+    assert all(s["state"]["room_id"] == "uid-o" for s in states)
+    assert observations(sent, "/uid-o/availability")[-1]["status"] == "offline"

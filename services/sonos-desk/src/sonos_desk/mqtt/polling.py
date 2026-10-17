@@ -110,7 +110,7 @@ class StatePoller:
         if room is None:
             return False
         try:
-            state = self.backend.state(room, fresh=True)
+            state = self.backend.state(room, fresh=True, room_id_only=True)
         except BackendError:
             state = None
         with self._lock:

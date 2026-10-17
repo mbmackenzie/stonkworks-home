@@ -150,3 +150,56 @@ def test_expired_outgoing_results_are_dropped():
     now[0] = 31
     transport._flush(client)
     assert not client.sent
+
+
+def test_negative_puback_does_not_confirm_offline():
+    transport, client, _, _, _ = rig()
+    connect(client)
+    from sonos_desk.mqtt.protocol import encode_payload
+
+    transport.publish(Publication(Topics().availability, encode_payload({"status": "offline"}), True, None))
+    transport._flush(client)
+    client.on_publish(client, None, 1, SimpleNamespace(is_failure=True), None)
+    assert not transport._offline_acked.is_set()
+
+
+def test_shutdown_requests_will_when_offline_publish_cannot_be_sent():
+    import threading
+
+    from conftest import until
+
+    reasons, clients = [], []
+    ready = threading.Event()
+
+    class WithheldAckClient(Client):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            clients.append(self)
+
+        def connect(self, *args, **kwargs):
+            connect(self)
+
+        def loop(self, timeout):
+            threading.Event().wait(0.01)
+            return 0
+
+        def socket(self):
+            return None
+
+        def disconnect(self, reasoncode=None):
+            reasons.append(0 if reasoncode is None else reasoncode.value)
+
+    config = MqttConfig("mqtt.example.test", 1883, "app", "pw", "main", 3, False, None)
+    transport = MqttTransport(
+        config, Topics(), str(uuid4()), lambda m: None, ready.set, lambda: None, client_factory=WithheldAckClient
+    )
+    try:
+        transport.start()
+        assert ready.wait(2)
+        for n in range(20):
+            assert transport.publish(Publication(f"topic/{n}", b"{}", True, 90))
+        until(lambda: len(clients[0].sent) == 20, timeout=2)
+    finally:
+        transport.close()
+    assert reasons == [4]  # MQTT 5 Disconnect with Will Message.
+    assert not any(args[0] == Topics().availability for args, kw in clients[0].sent)
