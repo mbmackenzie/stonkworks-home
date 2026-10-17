@@ -2,7 +2,7 @@
 
 Date: 2026-10-16
 
-Status: Written design awaiting user review. Implementation has not started.
+Status: Approved by the user on 2026-10-16. Implementation has not started.
 
 ## Intent and success criteria
 
