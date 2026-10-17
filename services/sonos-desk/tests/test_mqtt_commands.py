@@ -194,3 +194,12 @@ def test_known_backend_rejection(rig, monkeypatch, status):
     processor.accept(message())
     processor.run_one()
     assert results(sent)[-1]["status"] == "rejected"
+
+
+def test_deeply_nested_json_is_dropped_without_disabling_commands(rig):
+    processor, speaker, _, _, message = rig
+    payload = b"[" * 1500 + b"0" + b"]" * 1500
+    processor.accept(IncomingCommand(message().topic, payload, False, 10, 0))
+    processor.accept(message())
+    assert processor.run_one()
+    assert speaker.skips == 1

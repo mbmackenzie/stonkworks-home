@@ -152,3 +152,22 @@ For a private CA, add a read-only bind mount in your local override and point
 `rooms_unavailable`, and sanitized `last_error`. Disabled state has false
 booleans, zero counters, and null session/times/error. No status request
 contacts speakers or the broker; `/health` keeps its existing liveness contract.
+
+### MQTT verification
+
+Normal tests use simulated speakers and fake transports. The optional MQTT
+integration suite starts a disposable Mosquitto 2.0.22 container with generated
+credentials, temporary persistence, a random loopback port, and its own topic
+instances. It never uses household credentials or restarts an existing broker.
+Docker access and the broker image are required. Without explicit opt-in these
+checks skip; with opt-in, unavailable Docker/image startup is a test failure.
+
+```sh
+SONOS_MQTT_INTEGRATION=1 uv run --package sonos-desk pytest -q \
+  -m mqtt_integration services/sonos-desk/tests/test_mqtt_integration.py
+```
+
+The suite covers actual command/results, retained state, duplicate and retained
+commands, backend-lock expiry, uncertain writes, process session changes,
+abrupt-disconnect Last Will, broker restart with HTTP still serving, broker
+message expiry, authentication denial, and the example software client.

@@ -8,9 +8,9 @@ portable deployment definitions. Each household supplies its own credentials,
 network settings, and device assignments.
 
 The current implementation is the Sonos Desk source extraction: a FastAPI/SoCo
-backend, browser controller, and Pillow e-ink renderer. Home management, MQTT,
-device onboarding, firmware, registry releases, and Pi packaging are future
-work. Do not describe them as implemented or scaffold empty subsystems.
+backend, browser controller, Pillow e-ink renderer, and optional MQTT 5 adapter.
+Home management, device configuration contracts, device onboarding, firmware,
+registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 
 Scope comes from the “Clarify Stonkworks Home Scope” conversation
 (`01a14624-ab48-78e1-ade3-d3f2892a6573`) and its proposal. On the reference host,
@@ -34,8 +34,9 @@ current source and documentation to establish implemented behavior.
 - The intended MQTT broker is a separate stack, with support for an existing
   broker. Home will persist authoritative assignments and publish retained
   configuration using stable speaker IDs. Commands must not be retained;
-  large rendered frames stay on HTTP. Topics, schemas, authentication, and
-  duplicate handling still require design.
+  large rendered frames stay on HTTP. Sonos state/command contracts are in
+  `protocols/v1/`; device configuration, provisioning, and permissions still
+  require design.
 - Home should remain usable when an integration fails. Configured controllers
   should eventually continue operating through a temporary Home outage using
   their last configuration, provided MQTT and their integration remain available.
@@ -48,14 +49,15 @@ current source and documentation to establish implemented behavior.
   validation/routes (`routes.py`), SoCo integration (`sonos.py`), Pillow rendering
   (`render.py`), and packaged browser UI (`templates/browser.html`).
 - `services/sonos-desk/tests/`: simulated-speaker API, backend, and renderer
-  tests; optional Playwright browser check.
-- `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example and
-  `.env.example`, not the household's deployed stack.
+  tests; optional Playwright browser check and disposable-broker MQTT checks.
+- `protocols/v1/`: implemented Sonos MQTT topics, message schemas, and client usage.
+- `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example, optional
+  MQTT overlay, and `.env.example`, not the household's deployed stack.
 - `docs/sonos-desk.md`: HTTP contract, command semantics, rendering, and polling.
 - Root `pyproject.toml` and `uv.lock`: Python 3.13+ uv workspace and shared lockfile.
 
-Introduce `hub/`, `firmware/`, `protocols/`, or additional stacks when their first
-implementation is requested. Extract shared abstractions when actual reuse exists.
+Introduce `hub/`, `firmware/`, or additional stacks when their first implementation
+is requested. Extract shared abstractions when actual reuse exists.
 
 ## Development and validation
 

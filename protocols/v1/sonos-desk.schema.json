@@ -413,6 +413,22 @@
         "completed_at",
         "status",
         "detail"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "completed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "state"
+            ]
+          }
+        }
       ]
     }
   }

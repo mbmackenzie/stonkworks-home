@@ -69,3 +69,24 @@ def test_command_schema_matches_runtime_validation():
     validator.validate(request(command="mute", value=False))
     for change in ({"value": None}, {"command": "volume"}, {"command": "volume", "value": True}, {"extra": 1}):
         assert list(validator.iter_errors(request(**change)))
+
+
+def test_completed_result_schema_requires_state():
+    from pathlib import Path
+
+    import jsonschema
+
+    schema = json.loads((Path(__file__).resolve().parents[3] / "protocols/v1/sonos-desk.schema.json").read_text())
+    validator = jsonschema.Draft202012Validator({**schema, "$ref": "#/$defs/result"})
+    payload = {
+        "service_session": str(uuid4()),
+        "client_id": "test",
+        "request_id": str(uuid4()),
+        "room_id": "uid-o",
+        "completed_at": "2026-10-16T00:00:00Z",
+        "status": "completed",
+        "detail": "Command completed",
+    }
+    assert list(validator.iter_errors(payload))
+    payload["status"] = "uncertain"
+    validator.validate(payload)

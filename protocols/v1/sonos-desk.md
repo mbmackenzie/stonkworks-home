@@ -57,3 +57,48 @@ missing results. Transport acknowledgments do not confirm speaker execution.
 Commands are limited to 4 KiB, 16 queued actions and 1,024 pending/protected
 records. Overload rejects new work without evicting protected records.
 Rendered frames stay on HTTP and continue to support ETags.
+
+## Try with MQTTX
+
+Connect MQTTX to your own broker, select **MQTT 5.0**, and use a separate
+browser-client account. Subscribe to the base topic plus `/#`. Obtain the room
+ID from `rooms` and the session UUID from online `availability`. Subscribe to
+`clients/desk-test/results` before publishing a command.
+
+Publish to `<base>/rooms/<room_id>/command` with QoS 1, **Retain off**, and
+**Message Expiry Interval 10** in the MQTT 5 publish properties:
+
+```json
+{
+  "request_id": "36cdd095-21d8-48e0-bbe9-fd65fb715012",
+  "client_id": "desk-test",
+  "service_session": "<current online session UUID>",
+  "command": "volume",
+  "value": 20
+}
+```
+
+Replace the session placeholder and generate a fresh request UUID for every
+new user action. The illustration's UUID must not be reused for real actions.
+The command changes the selected room's volume when sent to a live service.
+A rejected expiry request usually means MQTT 5 publish properties were omitted;
+adding an expiry field inside the JSON does not set MQTT message expiry.
+
+## Single-command software client
+
+After configuring `SONOS_MQTT_HOST`, `SONOS_MQTT_USERNAME`, and
+`SONOS_MQTT_PASSWORD_FILE` (plus port/TLS settings when needed), run from the
+repository root:
+
+```sh
+uv run --package sonos-desk python services/sonos-desk/examples/mqtt_client.py \
+  --instance main --room-id '<stable-room-id>' --command volume --value 20
+```
+
+This sends an explicit action to the configured broker. `--value` uses JSON
+syntax: `20`, `-1`, `true`, or `false`, with strict command-specific validation.
+Omit it for playback commands. The client subscribes before sending, reads the
+current session, sends once with ten-second expiry, and waits up to 15 seconds
+for a result. It does not reconnect or retry the action. Exit codes: 0 completed,
+2 rejected/invalid arguments, 3 uncertain, 4 no result, and 5 invalid broker
+configuration. A timeout or disconnect can leave the action outcome uncertain.

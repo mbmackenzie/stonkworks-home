@@ -27,3 +27,6 @@ members = [
 
 [tool.ruff]
 line-length = 120
+
+[tool.pytest.ini_options]
+markers = ["mqtt_integration: opt-in tests against a disposable Docker broker"]
