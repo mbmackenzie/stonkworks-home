@@ -175,3 +175,96 @@ def test_discovery_interface_is_installation_configuration(monkeypatch, interfac
     backend = SonosBackend(discover=lambda **kwargs: calls.append(kwargs) or [])
     assert backend.rooms() == []
     assert calls == [{"timeout": 3, "interface_addr": interface or None}]
+
+
+def test_expired_command_never_mutates(speakers):
+    from sonos_desk.sonos import CommandExpired
+
+    backend = SonosBackend(discover=lambda **kw: speakers, clock=lambda: 10)
+    with pytest.raises(CommandExpired):
+        backend.command("uid-o", "next", deadline=10)
+    assert speakers[0].skips == 0
+
+
+@pytest.mark.parametrize("command,value", [("next", None), ("volume_relative", 1), ("play_pause", None)])
+def test_deadline_rechecked_after_resolution(speakers, command, value):
+    from sonos_desk.sonos import CommandExpired
+
+    now = [0]
+    backend = SonosBackend(discover=lambda **kw: speakers, clock=lambda: now[0])
+    speakers[1].zone_group_state.clear_cache = lambda: now.__setitem__(0, 11)
+    with pytest.raises(CommandExpired):
+        backend.command("uid-o", command, value, deadline=10)
+    assert speakers[0].skips == 0
+    assert speakers[0].transport == "PLAYING"
+    assert speakers[1].volume == 40
+
+
+def test_deadline_rechecked_after_toggle_read(speakers, monkeypatch):
+    from sonos_desk.sonos import CommandExpired
+
+    now = [0]
+    backend = SonosBackend(discover=lambda **kw: speakers, clock=lambda: now[0])
+
+    def slow_transport():
+        now[0] = 11
+        return {"current_transport_state": "PLAYING"}
+
+    monkeypatch.setattr(speakers[0], "get_current_transport_info", slow_transport)
+    with pytest.raises(CommandExpired):
+        backend.command("uid-o", "play_pause", deadline=10)
+    assert speakers[0].transport == "PLAYING"
+
+
+def test_deadline_rechecked_after_volume_read():
+    from sonos_desk.sonos import CommandExpired
+
+    now = [0]
+
+    class SlowVolume(Speaker):
+        @property
+        def volume(self):
+            now[0] = 11
+            return self._volume
+
+        @volume.setter
+        def volume(self, value):
+            self._volume = value
+
+    speaker = SlowVolume("Office", "uid-o")
+    backend = SonosBackend(discover=lambda **kw: [speaker], clock=lambda: now[0])
+    with pytest.raises(CommandExpired):
+        backend.command("uid-o", "volume_relative", 1, deadline=10)
+    assert speaker._volume == 40
+
+
+def test_room_ids_survive_broken_group_lookup(speakers):
+    calls = []
+    backend = SonosBackend(discover=lambda **kw: calls.append(kw) or speakers, clock=lambda: 0)
+    speakers[0].group = None
+    assert backend.room_ids() == ["uid-k", "uid-o"]
+    assert backend.room_ids() == ["uid-k", "uid-o"]
+    assert len(calls) == 1
+
+
+def test_deadline_rechecked_after_waiting_for_http_lock(speakers):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from sonos_desk.sonos import CommandExpired
+
+    now, entered = [0], Event()
+    backend = SonosBackend(discover=lambda **kw: speakers, clock=lambda: now[0])
+
+    def execute():
+        entered.set()
+        return backend.command("uid-o", "next", deadline=10)
+
+    with ThreadPoolExecutor() as executor:
+        with backend._lock:
+            future = executor.submit(execute)
+            assert entered.wait(2)
+            now[0] = 11
+        with pytest.raises(CommandExpired):
+            future.result(timeout=2)
+    assert speakers[0].skips == 0

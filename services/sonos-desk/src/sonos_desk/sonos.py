@@ -22,6 +22,10 @@ class BackendError(Exception):
         super().__init__(message)
 
 
+class CommandExpired(Exception):
+    """An internal MQTT deadline elapsed before the speaker write."""
+
+
 class SonosBackend:
     def __init__(self, discover=None, clock=time.monotonic):
         self._discover = discover or soco.discover
@@ -90,6 +94,11 @@ class SonosBackend:
             except NETWORK_ERRORS as exc:
                 raise self._error(exc) from exc
 
+    def room_ids(self) -> list[str]:
+        with self._lock:
+            self._refresh()
+            return [speaker.uid for speaker in self._speakers]
+
     def health(self):
         # Health checks must never wait on speakers or initiate SSDP discovery.
         return {
@@ -137,25 +146,29 @@ class SonosBackend:
             except NETWORK_ERRORS as exc:
                 raise self._error(exc) from exc
 
-    def command(self, room, command, value=None):
+    def command(self, room, command, value=None, *, deadline: float | None = None):
         with self._lock:
             try:
                 speaker = self._resolve(room)
                 speaker.zone_group_state.clear_cache()
                 coordinator = speaker.group.coordinator
                 if command == "volume":
-                    speaker.volume = value
+                    action = lambda: setattr(speaker, "volume", value)
                 elif command == "volume_relative":
-                    speaker.volume = max(0, min(100, speaker.volume + value))
+                    volume = max(0, min(100, speaker.volume + value))
+                    action = lambda: setattr(speaker, "volume", volume)
                 elif command == "mute":
-                    speaker.mute = value
+                    action = lambda: setattr(speaker, "mute", value)
                 elif command == "play_pause":
                     playing = coordinator.get_current_transport_info()["current_transport_state"] == "PLAYING"
-                    (coordinator.pause if playing else coordinator.play)()
+                    action = coordinator.pause if playing else coordinator.play
                 elif command in {"play", "pause", "next", "previous"}:
-                    getattr(coordinator, command)()
+                    action = getattr(coordinator, command)
                 else:
                     raise BackendError(422, "Unknown command")
+                if deadline is not None and self._clock() >= deadline:
+                    raise CommandExpired("Command expired before speaker dispatch")
+                action()
                 # Invalidate every room: a transport command affects the group.
                 self._states.clear()
                 try:
