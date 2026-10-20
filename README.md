@@ -9,7 +9,10 @@ FastAPI/SoCo backend, browser controller, and Pillow display renderer.
 - `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example.
 - `docs/sonos-desk.md`: HTTP API, rendering, and development instructions.
 
-Home management, MQTT contracts, and firmware are planned, not implemented.
+Sonos Desk optionally publishes room state and accepts commands over MQTT 5;
+see [the protocol](protocols/v1/sonos-desk.md) and
+[configuration](docs/sonos-desk.md#optional-mqtt).
+Home management and firmware are planned, not implemented.
 Add their directories when their first implementation is ready. Existing
 household applications remain outside this project.
 

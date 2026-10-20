@@ -8,9 +8,10 @@ from urllib.parse import urljoin
 
 import requests
 import soco
+import soco.config
 from soco.exceptions import NotSupportedException, SoCoException, SoCoUPnPException
 
-soco.config.REQUEST_TIMEOUT = 3
+soco.config.REQUEST_TIMEOUT = 3.0
 log = logging.getLogger(__name__)
 NETWORK_ERRORS = (requests.RequestException, SoCoException, OSError)
 
@@ -19,6 +20,10 @@ class BackendError(Exception):
     def __init__(self, status, message):
         self.status = status
         super().__init__(message)
+
+
+class CommandExpired(Exception):
+    """An internal MQTT deadline elapsed before the speaker write."""
 
 
 class SonosBackend:
@@ -43,11 +48,15 @@ class SonosBackend:
             log.warning("Sonos discovery failed", exc_info=True)
         self._inventory_at = self._clock()
 
-    def _resolve(self, room):
+    def _resolve(self, room, *, room_id_only=False):
         self._refresh()
         for attempt in range(2):
             uid_matches = [s for s in self._speakers if s.uid == room]
-            matches = uid_matches or [s for s in self._speakers if s.player_name.casefold() == room.casefold()]
+            matches = (
+                uid_matches
+                if room_id_only
+                else (uid_matches or [s for s in self._speakers if s.player_name.casefold() == room.casefold()])
+            )
             if len(matches) == 1:
                 return matches[0]
             if len(matches) > 1:
@@ -89,6 +98,11 @@ class SonosBackend:
             except NETWORK_ERRORS as exc:
                 raise self._error(exc) from exc
 
+    def room_ids(self) -> list[str]:
+        with self._lock:
+            self._refresh()
+            return [speaker.uid for speaker in self._speakers]
+
     def health(self):
         # Health checks must never wait on speakers or initiate SSDP discovery.
         return {
@@ -97,10 +111,10 @@ class SonosBackend:
             "discovery": "degraded" if self._discovery_failed else "ok",
         }
 
-    def state(self, room, fresh=False):
+    def state(self, room, fresh=False, *, room_id_only=False):
         with self._lock:
             try:
-                speaker = self._resolve(room)
+                speaker = self._resolve(room, room_id_only=room_id_only)
                 cached = self._states.get(speaker.uid)
                 if not fresh and cached and self._clock() - cached[0] < 1:
                     return dict(cached[1])
@@ -136,29 +150,33 @@ class SonosBackend:
             except NETWORK_ERRORS as exc:
                 raise self._error(exc) from exc
 
-    def command(self, room, command, value=None):
+    def command(self, room, command, value=None, *, deadline: float | None = None, room_id_only=False):
         with self._lock:
             try:
-                speaker = self._resolve(room)
+                speaker = self._resolve(room, room_id_only=room_id_only)
                 speaker.zone_group_state.clear_cache()
                 coordinator = speaker.group.coordinator
                 if command == "volume":
-                    speaker.volume = value
+                    action = lambda: setattr(speaker, "volume", value)
                 elif command == "volume_relative":
-                    speaker.volume = max(0, min(100, speaker.volume + value))
+                    volume = max(0, min(100, speaker.volume + value))
+                    action = lambda: setattr(speaker, "volume", volume)
                 elif command == "mute":
-                    speaker.mute = value
+                    action = lambda: setattr(speaker, "mute", value)
                 elif command == "play_pause":
                     playing = coordinator.get_current_transport_info()["current_transport_state"] == "PLAYING"
-                    (coordinator.pause if playing else coordinator.play)()
+                    action = coordinator.pause if playing else coordinator.play
                 elif command in {"play", "pause", "next", "previous"}:
-                    getattr(coordinator, command)()
+                    action = getattr(coordinator, command)
                 else:
                     raise BackendError(422, "Unknown command")
+                if deadline is not None and self._clock() >= deadline:
+                    raise CommandExpired("Command expired before speaker dispatch")
+                action()
                 # Invalidate every room: a transport command affects the group.
                 self._states.clear()
                 try:
-                    return self.state(speaker.uid, fresh=True)
+                    return self.state(speaker.uid, fresh=True, room_id_only=room_id_only)
                 except BackendError as exc:
                     raise BackendError(
                         503, "Command sent but state refresh failed; read state before retrying"
