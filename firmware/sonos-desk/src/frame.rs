@@ -5,6 +5,18 @@ use std::io::{BufReader, Cursor};
 pub const MAX_PNG_BYTES: usize = 128 * 1024;
 
 pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
+    let mut frame: Frame = vec![0xff; 48_000]
+        .into_boxed_slice()
+        .try_into()
+        .map_err(|_| "Invalid framebuffer size")?;
+    decode_png_into(bytes, &mut frame)?;
+    Ok(frame)
+}
+
+/// Decode into a caller-owned buffer, so the device can reuse two long-lived frames
+/// instead of fragmenting its small heap with a fresh 48,000 bytes per update.
+/// The buffer is only meaningful when this returns `Ok`.
+pub fn decode_png_into(bytes: &[u8], frame: &mut [u8; 48_000]) -> Result<(), &'static str> {
     if bytes.len() > MAX_PNG_BYTES {
         return Err("PNG exceeds 128 KiB");
     }
@@ -40,7 +52,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
     if reader.info().animation_control.is_some() {
         return Err("Animated PNG is unsupported");
     }
-    let mut frame = vec![0xff; 48_000];
+    frame.fill(0xff);
     for y in 0..480 {
         let row = reader
             .next_row()
@@ -63,10 +75,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
     reader
         .finish()
         .map_err(|_| "Incomplete or invalid PNG end")?;
-    frame
-        .into_boxed_slice()
-        .try_into()
-        .map_err(|_| "Invalid framebuffer size")
+    Ok(())
 }
 
 pub use crate::link::{DisplayLink, Signals};

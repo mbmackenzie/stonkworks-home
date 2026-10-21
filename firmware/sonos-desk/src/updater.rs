@@ -16,20 +16,29 @@ use std::{
 
 fn heap(label: &str) {
     // SAFETY: Plain ESP-IDF getters with no preconditions.
-    let (free, low) = unsafe {
+    let (free, low, block) = unsafe {
         (
             esp_idf_svc::sys::esp_get_free_heap_size(),
             esp_idf_svc::sys::esp_get_minimum_free_heap_size(),
+            esp_idf_svc::sys::heap_caps_get_largest_free_block(
+                esp_idf_svc::sys::MALLOC_CAP_DEFAULT,
+            ),
         )
     };
-    println!("Display: heap {label}: {free} free, {low} lowest");
+    println!("Display: heap {label}: {free} free, {low} lowest, {block} largest block");
 }
 
 pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<DisplayLink>) {
     let start = Instant::now();
     let now = || start.elapsed().as_millis() as u64;
     let mut schedule = Schedule::default();
-    let mut shown: Option<Frame> = None;
+    // Two long-lived frames, allocated before the heap fragments: `shown` is on the
+    // panel, `next` receives each decode. A fresh 48 KB per update starved the PNG
+    // decoder of its contiguous 32 KiB window.
+    let mut shown: Frame = blank();
+    let mut next: Frame = blank();
+    let mut have_shown = false;
+    heap("at start");
     // Hold PWR low and leave controls running after a panel/SPI fault.
     let disable = |error: anyhow::Error| -> ! {
         println!("Display: panel failed: {error}; refresh disabled until reset");
@@ -46,8 +55,8 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
             Action::Wait => {}
             Action::FullRefresh => {
                 // Redraw the cached frame to clear ghosting; no network involved.
-                if let Some(frame) = &shown {
-                    if let Err(error) = panel.draw(frame) {
+                if have_shown {
+                    if let Err(error) = panel.draw(&shown) {
                         disable(error);
                     }
                     let etag = schedule.etag().map(str::to_owned);
@@ -56,51 +65,57 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                 }
             }
             Action::Fetch => {
-                let result = (|| -> anyhow::Result<Option<(Frame, Option<String>)>> {
+                let result = (|| -> anyhow::Result<Option<Option<String>>> {
                     let response = frame_http::fetch_connected(&config, schedule.etag())?;
                     let Some(bytes) = response.png else {
                         println!("Display: frame unchanged; skipping refresh");
                         return Ok(None);
                     };
-                    let frame = frame::decode_png(&bytes)
+                    frame::decode_png_into(&bytes, &mut next)
                         .map_err(|message| anyhow::anyhow!("{message}"))?;
                     drop(bytes);
                     if ready.load(Ordering::Acquire) == 0 {
                         anyhow::bail!("Connection unavailable; keeping previous image");
                     }
-                    Ok(Some((frame, response.etag)))
+                    Ok(Some(response.etag))
                 })();
-                match &result {
-                    Ok(Some((new, etag))) => match &shown {
-                        None => {
-                            if let Err(error) = panel.draw(new) {
+                let ok = result.is_ok();
+                match result {
+                    Ok(Some(etag)) => {
+                        if !have_shown {
+                            if let Err(error) = panel.draw(&next) {
                                 disable(error);
                             }
-                            schedule.full_shown(etag.clone(), now());
-                        }
-                        Some(old) => match changed_region(old, new) {
-                            None => schedule.set_etag(etag.clone()),
-                            Some(region) => {
-                                if let Err(error) = panel.draw_partial(old, new, region) {
-                                    disable(error);
-                                }
-                                schedule.partial_shown(etag.clone(), now());
+                            schedule.full_shown(etag, now());
+                        } else if let Some(region) = changed_region(&shown, &next) {
+                            if let Err(error) = panel.draw_partial(&shown, &next, region) {
+                                disable(error);
                             }
-                        },
-                    },
+                            schedule.partial_shown(etag, now());
+                        } else {
+                            schedule.set_etag(etag);
+                        }
+                        // The panel call succeeded, so the decoded frame is what it shows.
+                        if !have_shown || next != shown {
+                            std::mem::swap(&mut shown, &mut next);
+                            have_shown = true;
+                        }
+                        heap("after update");
+                    }
                     Ok(None) => {}
                     Err(error) => {
                         println!("Display: update failed: {error}; keeping previous image")
                     }
                 }
-                let ok = result.is_ok();
-                // Replace the cached frame only after the panel call succeeded.
-                if let Ok(Some((new, _))) = result {
-                    shown = Some(new);
-                    heap("after update");
-                }
                 schedule.fetched(now(), ok);
             }
         }
     }
+}
+
+fn blank() -> Frame {
+    vec![0xff; 48_000]
+        .into_boxed_slice()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!())
 }

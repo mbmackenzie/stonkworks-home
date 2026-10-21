@@ -409,3 +409,26 @@ mod schedule {
         assert_eq!(s.update(Signals::default(), 180_000), Action::Fetch);
     }
 }
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn frame_decoder_overwrites_a_reused_buffer() {
+    use sonos_desk_firmware::frame::{decode_png, decode_png_into};
+    let mut pixels = vec![255; 800 * 480];
+    pixels[800 * 100 + 40] = 0;
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 800, 480);
+        encoder.set_color(png::ColorType::Grayscale);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&pixels)
+            .unwrap();
+    }
+    let mut reused = [0x00; 48_000]; // A previous frame's leftovers.
+    decode_png_into(&bytes, &mut reused).unwrap();
+    assert_eq!(&reused, &*decode_png(&bytes).unwrap());
+    assert!(decode_png_into(&bytes[..bytes.len() - 12], &mut reused).is_err());
+}
