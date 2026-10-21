@@ -481,7 +481,8 @@ controller with `memory allocation of 32768 bytes failed`. The controller theref
 **refuses PNG responses**: a service that predates `format=bitmap` ignores the parameter and
 answers with a PNG, which is rejected with `Service sent a PNG; update Sonos Desk to a
 version with format=bitmap` (logged as `Display: update failed`). The previous image stays and
-the controls keep working, retrying every 3 minutes. Redeploy the service to restore updates.
+the controls keep working; the worker retries every 10 seconds until the first frame has been
+shown and every 3 minutes afterwards. Redeploy the service to restore updates.
 
 **How it draws.** The first frame is a full refresh. After that, the worker
 compares each fetched frame with the cached one (`changed_regions`) and partially
@@ -525,8 +526,14 @@ that ETag and the old image. Panel/SPI failure disables display updates until re
 leaving controls running. No image queue or automatic replay of Sonos commands is
 added. The worker logs free heap after each update.
 
-Hardware acceptance for live updates is recorded below once run. The earlier
-periodic-refresh build's acceptance follows for history.
+Hardware acceptance, live updates (2026-10-21, user-confirmed): volume, play/pause, mute,
+previous and next all act on the right room and the screen follows within about two seconds
+without a full-screen flash; text residue is visible but modest and is cleared by one fast
+flash four seconds after the art or text changes; holding Mute forces the slow refresh and
+does not toggle mute; playlists with rich artwork no longer crash the controller (heap
+low-water mark about 106 KB, previously 15 to 28 KB). Not observed on hardware: the
+24-hour backstop, and the refusal of a PNG response (the latter is covered by a host test).
+The earlier periodic-refresh build's acceptance follows for history.
 
 Hardware acceptance, periodic build (2026-10-21): the combined controller reached MQTT readiness,
 fetched and drew the first frame with Wi-Fi/MQTT still active, then fetched a

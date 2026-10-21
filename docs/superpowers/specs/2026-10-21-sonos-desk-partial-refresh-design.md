@@ -168,3 +168,34 @@ and the art box, under four variants. Source: Waveshare's
 - **Chosen for implementation:** variant 1 (reset each time, old plane
   written). It is robust to deep sleep and power-off, and costs about 45 ms over
   variant 3.
+
+## Implementation outcome (2026-10-21)
+
+What shipped differs from the design above in these ways, all found on hardware:
+
+- **Plane swap.** The controller swaps its two RAM planes after every refresh. A partial
+  that wrote only its window made the next partial draw the previous one back. Every
+  partial now writes the new window into both planes after refreshing. The spike did not
+  catch this because its updates were too regular to notice.
+- **Memory.** PNG decoding peaked at about 82 KB beside two 48 KB frames and crashed the
+  controller on playlist artwork. The service gained `GET /frame?...&mode=mono&format=bitmap`
+  (48,000 packed bytes) and the controller fetches only that, refusing PNG responses with a
+  recoverable error. See `docs/sonos-desk.md`.
+- **PWR stays high** after every draw; the panel sleeps with RAM retained. The planned reload
+  after power-off was unnecessary and removed.
+- **Boxes.** Changes are drawn as separate boxes (art, text, labels), at most four, rather
+  than one bounding box.
+- **Drive style.** One pass. Two passes, three passes and erase-then-write were compared by
+  eye: no pass count helped and erase-then-write was clearly worse.
+- **Cleanup.** Not idle-only. Four seconds after a partial changes the art or the text
+  (`Region::is_content`), the controller redraws the cached frame with the panel's fast full
+  waveform (one flash, about 2.7 s in total). Volume, mute and label changes are cleaned after
+  60 seconds of quiet, and a 24-hour backstop remains. Holding Mute forces the slow, thorough
+  refresh. Presses do not trigger cleanup.
+- **Transport label.** The service holds the last settled label through a `TRANSITIONING`
+  state for up to 10 seconds, so the header does not change twice per track change.
+- **Measured:** a `next` press settles in about 2 s; partial refreshes take about 0.55 s each
+  plus transfer; heap low-water mark is about 106 KB free.
+
+Not done: local drawing of the volume bar (not needed: latency is acceptable), and a custom
+waveform (no vendor data for this panel; risk of damage).
