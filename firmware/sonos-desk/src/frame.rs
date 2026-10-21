@@ -199,7 +199,7 @@ const DEBOUNCE_MS: u64 = 150;
 const SETTLE_MS: u64 = 2_500;
 const POLL_MS: u64 = 180_000;
 const STARTUP_RETRY_MS: u64 = 10_000;
-const IDLE_MS: u64 = 60_000;
+const IDLE_MS: u64 = 12_000;
 const BACKSTOP_MS: u64 = 86_400_000;
 
 /// Decide when to fetch a frame and when to clean ghosting with a full refresh.

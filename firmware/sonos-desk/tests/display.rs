@@ -1,7 +1,9 @@
 #![cfg(feature = "display-check")]
 
 use embedded_hal::delay::DelayNs;
-use sonos_desk_firmware::panel::{Region, pattern, show_frame, show_partial, show_pattern};
+use sonos_desk_firmware::panel::{
+    Region, pattern, show_frame, show_frame_with, show_partial, show_pattern,
+};
 use ssd1677::DisplayInterface;
 
 #[derive(Default)]
@@ -365,9 +367,9 @@ mod schedule {
         assert_eq!(drive(&mut s, signals(1, 0, 0), 1_150), Action::Wait);
         s.partial_shown(E(), 1_150);
         assert_eq!(drive(&mut s, signals(1, 1, 0), 30_000), Action::Wait); // Input resets idle.
-        assert_eq!(drive(&mut s, signals(1, 1, 0), 89_999), Action::Wait);
-        assert_eq!(drive(&mut s, signals(1, 1, 0), 90_000), Action::FullRefresh);
-        s.full_shown(E(), 90_000);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 41_999), Action::Wait);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 42_000), Action::FullRefresh);
+        s.full_shown(E(), 42_000);
         assert_eq!(drive(&mut s, signals(1, 1, 0), 200_000), Action::Wait);
         // No partials since the last full refresh: nothing to clean up.
         assert_eq!(drive(&mut s, signals(1, 1, 0), 10_000_000), Action::Wait);
@@ -380,17 +382,17 @@ mod schedule {
         s.partial_shown(E(), DAY / 2); // Partials never advance the full-refresh clock.
         assert_eq!(drive(&mut s, signals(0, 1, 0), DAY), Action::Wait); // Active: deferred.
         assert_eq!(
-            drive(&mut s, signals(0, 1, 0), DAY + 60_000),
+            drive(&mut s, signals(0, 1, 0), DAY + 12_000),
             Action::FullRefresh
         );
-        s.full_shown(E(), DAY + 60_000);
+        s.full_shown(E(), DAY + 12_000);
         // Every fetch is a 304 from here on; the backstop still redraws the cached frame.
         assert_eq!(
-            drive(&mut s, signals(0, 1, 0), 2 * DAY + 60_000 - 1),
+            drive(&mut s, signals(0, 1, 0), 2 * DAY + 12_000 - 1),
             Action::Wait
         );
         assert_eq!(
-            drive(&mut s, signals(0, 1, 0), 2 * DAY + 60_000),
+            drive(&mut s, signals(0, 1, 0), 2 * DAY + 12_000),
             Action::FullRefresh
         );
     }
@@ -581,5 +583,25 @@ fn changed_regions_split_distant_clusters() {
             y0: 0,
             y1: 1
         }]
+    );
+}
+
+#[test]
+fn fast_full_refresh_uses_the_vendor_fast_waveform() {
+    let frame = pattern();
+    let mut wire = Wire::default();
+    show_frame_with(&mut wire, &frame, true, &mut Delay).unwrap();
+    let position = |command: u8| wire.packets.iter().position(|p| p.0 == command).unwrap();
+    assert_eq!(wire.packets[position(0x1a)].1, [0x6a]); // Vendor "Fast (1.5 s)" temperature value.
+    assert!(position(0x1a) < position(0x24)); // Set before the planes are written.
+    assert_eq!(wire.packets[position(0x22)].1, [0xd7]); // Fast trigger, not the OTP full 0xf7.
+    assert_eq!(wire.packets.last().unwrap().1, [1]); // Still sleeps afterwards.
+    // The normal full refresh is unchanged.
+    let mut normal = Wire::default();
+    show_frame(&mut normal, &frame, &mut Delay).unwrap();
+    assert!(!normal.packets.iter().any(|p| p.0 == 0x1a));
+    assert_eq!(
+        normal.packets.iter().find(|p| p.0 == 0x22).unwrap().1,
+        [0xf7]
     );
 }

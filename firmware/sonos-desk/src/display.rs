@@ -149,7 +149,13 @@ impl Panel {
         result
     }
 
+    /// A full refresh with the panel's normal (slow, thorough) waveform.
     pub fn draw(&mut self, frame: &[u8; 48_000]) -> anyhow::Result<()> {
+        self.draw_with(frame, false)
+    }
+
+    /// A full refresh; `fast` uses the shorter waveform that flashes fewer times.
+    pub fn draw_with(&mut self, frame: &[u8; 48_000], fast: bool) -> anyhow::Result<()> {
         let result = (|| -> anyhow::Result<()> {
             self.power_up()?;
             self.reset_pulse()?;
@@ -157,7 +163,7 @@ impl Panel {
                 Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
             io.set_busy_timeout(15_000);
             println!("Display: drawing one frame; BUSY timeout 15 seconds per wait");
-            panel::show_frame(&mut io, frame, &mut FreeRtos)
+            panel::show_frame_with(&mut io, frame, fast, &mut FreeRtos)
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             println!("Display: refresh finished; sleep command sent");
             Ok(())

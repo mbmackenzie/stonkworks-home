@@ -41,6 +41,7 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
     let mut shown: Frame = blank();
     let mut next: Frame = blank();
     let mut have_shown = false;
+    let mut last_force = 0;
     heap("at start");
     // Hold PWR low and leave controls running after a panel/SPI fault.
     let disable = |error: anyhow::Error| -> ! {
@@ -55,12 +56,15 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
             continue;
         }
         let signals = link.snapshot();
+        // A held Mute asks for the thorough refresh; idle cleanup uses the fast waveform.
+        let forced = signals.force != last_force;
+        last_force = signals.force;
         match schedule.update(signals, now()) {
             Action::Wait => {}
             Action::FullRefresh => {
                 // Redraw the cached frame to clear ghosting; no network involved.
                 if have_shown {
-                    if let Err(error) = panel.draw(&shown) {
+                    if let Err(error) = panel.draw_with(&shown, !forced) {
                         disable(error);
                     }
                     let etag = schedule.etag().map(str::to_owned);

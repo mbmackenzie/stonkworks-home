@@ -32,6 +32,7 @@ fn ram_row(frame: &[u8; 48_000], row: usize) -> [u8; 100] {
 pub fn load_planes<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
     frame: &[u8; 48_000],
+    fast: bool,
     delay: &mut D,
 ) -> Result<(), I::Error> {
     io.busy_wait(delay)?;
@@ -52,6 +53,10 @@ pub fn load_planes<I: DisplayInterface, D: DelayNs>(
         io.send_data(data)?;
     }
     io.busy_wait(delay)?;
+    if fast {
+        io.send_command(0x1a)?;
+        io.send_data(&[0x6a])?; // Vendor "Fast (1.5 s)": a temperature value selecting the short waveform.
+    }
     for command in [0x24, 0x26] {
         io.send_command(command)?;
         for row in 0..480 {
@@ -66,9 +71,21 @@ pub fn show_frame<I: DisplayInterface, D: DelayNs>(
     frame: &[u8; 48_000],
     delay: &mut D,
 ) -> Result<(), I::Error> {
-    load_planes(io, frame, delay)?;
+    show_frame_with(io, frame, false, delay)
+}
+
+/// A full-screen refresh. `fast` uses the panel's shorter waveform, which cycles the
+/// pixels fewer times (less flashing, a little more residue left behind).
+pub fn show_frame_with<I: DisplayInterface, D: DelayNs>(
+    io: &mut I,
+    frame: &[u8; 48_000],
+    fast: bool,
+    delay: &mut D,
+) -> Result<(), I::Error> {
+    load_planes(io, frame, fast, delay)?;
     io.send_command(0x22)?;
-    io.send_data(&[0xf7])?; // Full refresh using the panel's OTP waveform.
+    // The OTP full waveform, or the vendor's fast one.
+    io.send_data(&[if fast { 0xd7 } else { 0xf7 }])?;
     io.send_command(0x20)?;
     // Allow BUSY to assert before the library polls it.
     delay.delay_ms(10);
