@@ -181,3 +181,54 @@ def test_artwork_follows_redirects_and_stops_redirect_loops():
         frame = renderer.frame(dict(STATE, artwork_url="http://speaker/loop"))
         assert Image.open(BytesIO(frame)).convert("L").getpixel((180, 180)) == 255
         assert seen == ["/loop"] * 4
+
+
+def settled_renderer(client, now):
+    return Renderer(client=client, clock=lambda: now[0])
+
+
+def test_transitioning_keeps_the_last_settled_label(artwork_client):
+    client, _ = artwork_client(png())
+    now = [0.0]
+    renderer = settled_renderer(client, now)
+    renderer.frame(STATE)
+    held = renderer.frame(dict(STATE, title="Next", playback_state="TRANSITIONING"))
+    assert held == Renderer(client=client).frame(dict(STATE, title="Next"))
+
+
+def test_first_frame_during_a_transition_shows_it(artwork_client):
+    client, _ = artwork_client(png())
+    transitioning = Renderer(client=client).frame(dict(STATE, playback_state="TRANSITIONING"))
+    assert transitioning != Renderer(client=client).frame(STATE)
+
+
+def test_long_transitions_are_shown_as_is(artwork_client):
+    from sonos_desk.render import TRANSITION_HOLD_SECONDS
+
+    client, _ = artwork_client(png())
+    now = [0.0]
+    renderer = settled_renderer(client, now)
+    settled = renderer.frame(STATE)
+    transitioning = dict(STATE, playback_state="TRANSITIONING")
+    assert renderer.frame(transitioning) == settled
+    now[0] = TRANSITION_HOLD_SECONDS
+    assert renderer.frame(transitioning) == Renderer(client=client).frame(transitioning)
+
+
+def test_transition_memory_is_per_room_and_follows_settling(artwork_client):
+    client, _ = artwork_client(png())
+    renderer = settled_renderer(client, [0.0])
+    renderer.frame(STATE)
+    other = dict(STATE, room_id="other", playback_state="TRANSITIONING")
+    assert renderer.frame(other) == Renderer(client=client).frame(other)  # No label of its own yet.
+    paused = dict(STATE, playback_state="PAUSED_PLAYBACK")
+    renderer.frame(paused)
+    assert renderer.frame(dict(STATE, playback_state="TRANSITIONING")) == renderer.frame(paused)
+
+
+def test_transition_memory_is_bounded(artwork_client):
+    client, _ = artwork_client(png())
+    renderer = settled_renderer(client, [0.0])
+    for index in range(40):
+        renderer.frame(dict(STATE, room_id=f"room-{index}"))
+    assert len(renderer.transport) <= 32
