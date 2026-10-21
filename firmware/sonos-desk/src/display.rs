@@ -55,6 +55,7 @@ pub struct Panel {
     dc: PinDriver<'static, gpio::Output>,
     busy: PinDriver<'static, gpio::Input>,
     spi: SpiDeviceDriver<'static, spi::SpiDriver<'static>>,
+    spike_asleep: bool,
 }
 
 impl Panel {
@@ -82,7 +83,58 @@ impl Panel {
             dc,
             busy,
             spi,
+            spike_asleep: true,
         })
+    }
+
+    /// Spike only: keep PWR high between updates; hardware-reset when asked or asleep.
+    fn spike_wake(&mut self, hard_reset: bool) -> anyhow::Result<()> {
+        if self.power.is_set_low() {
+            self.power.set_high()?;
+            thread::sleep(Duration::from_millis(100));
+        }
+        if hard_reset || self.spike_asleep {
+            self.reset.set_high()?;
+            thread::sleep(Duration::from_millis(20));
+            self.reset.set_low()?;
+            thread::sleep(Duration::from_millis(2));
+            self.reset.set_high()?;
+            thread::sleep(Duration::from_millis(20));
+            self.spike_asleep = false;
+        }
+        Ok(())
+    }
+
+    /// Spike only: full draw; the panel is left asleep but powered.
+    pub fn spike_full(&mut self, frame: &mut [u8; 48_000]) -> anyhow::Result<()> {
+        self.spike_wake(true)?;
+        let mut io = Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
+        io.set_busy_timeout(15_000);
+        panel::show_frame(&mut io, frame, &mut FreeRtos)
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        self.spike_asleep = true;
+        Ok(())
+    }
+
+    /// Spike only: vendor partial sequence; variant bit 1 skips the reset if awake.
+    pub fn spike_partial(
+        &mut self,
+        old: &[u8; 48_000],
+        new: &[u8; 48_000],
+        window: (u16, u16, u16, u16),
+        variant: u8,
+    ) -> anyhow::Result<()> {
+        self.spike_wake(variant & 2 == 0)?;
+        let mut io = Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
+        io.set_busy_timeout(15_000);
+        panel::show_partial_experiment(&mut io, old, new, window, variant, &mut FreeRtos)
+            .map_err(|error| anyhow::anyhow!("{error:?}"))
+    }
+
+    pub fn spike_off(&mut self) -> anyhow::Result<()> {
+        self.power.set_low()?;
+        self.spike_asleep = true;
+        Ok(())
     }
 
     pub fn draw(&mut self, frame: &mut [u8; 48_000]) -> anyhow::Result<()> {

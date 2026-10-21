@@ -84,3 +84,64 @@ pub fn pattern() -> Frame {
         .try_into()
         .unwrap_or_else(|_| unreachable!())
 }
+
+/// Spike only (throwaway): Waveshare `EPD_3in97_Display_Partial` sequence.
+/// `window` is `(x0, x1, y0, y1)` in frame pixels, x multiples of 8, exclusive ends.
+/// `variant` bit 0 also writes `old` to RAM 0x26. The caller owns the hardware reset.
+pub fn show_partial_experiment<I: DisplayInterface, D: DelayNs>(
+    io: &mut I,
+    old: &[u8; 48_000],
+    new: &[u8; 48_000],
+    window: (u16, u16, u16, u16),
+    variant: u8,
+    delay: &mut D,
+) -> Result<(), I::Error> {
+    let (x0, x1, y0, y1) = window;
+    // The full draw mirrors x (byte order and bits) and keeps y, so RAM x is 800 - frame x.
+    let (xs, xe) = ((800 - x1) / 8, (800 - x0) / 8);
+    let ram = |frame: &[u8; 48_000]| {
+        let mut bytes = Vec::with_capacity(usize::from((xe - xs) * (y1 - y0)));
+        for y in y0..y1 {
+            for column in (x0 / 8..x1 / 8).rev() {
+                bytes.push(frame[usize::from(y) * 100 + usize::from(column)].reverse_bits());
+            }
+        }
+        bytes
+    };
+    let set_window = |io: &mut I| -> Result<(), I::Error> {
+        let (xs_px, xe_px) = (xs * 8, (xe - 1) * 8);
+        for (command, data) in [
+            (0x11, &[0x03][..]), // X and Y increment, as after the vendor's reset.
+            (0x44, &[xs_px as u8, (xs_px >> 8) as u8, xe_px as u8, (xe_px >> 8) as u8][..]),
+            (0x45, &[y0 as u8, (y0 >> 8) as u8, (y1 - 1) as u8, ((y1 - 1) >> 8) as u8]),
+            (0x4e, &[xs_px as u8, (xs_px >> 8) as u8]),
+            (0x4f, &[y0 as u8, (y0 >> 8) as u8]),
+        ] {
+            io.send_command(command)?;
+            io.send_data(data)?;
+        }
+        Ok(())
+    };
+    io.busy_wait(delay)?;
+    for (command, data) in [(0x18, 0x80), (0x3c, 0x80)] {
+        io.send_command(command)?;
+        io.send_data(&[data])?;
+    }
+    if variant & 1 != 0 {
+        set_window(io)?;
+        io.send_command(0x26)?;
+        for row in ram(old).chunks(100) {
+            io.send_data(row)?;
+        }
+    }
+    set_window(io)?;
+    io.send_command(0x24)?;
+    for row in ram(new).chunks(100) {
+        io.send_data(row)?;
+    }
+    io.send_command(0x22)?;
+    io.send_data(&[0xff])?; // Vendor partial display mode.
+    io.send_command(0x20)?;
+    delay.delay_ms(10);
+    io.busy_wait(delay)
+}

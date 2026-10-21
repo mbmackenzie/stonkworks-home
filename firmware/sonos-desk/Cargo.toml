@@ -9,6 +9,7 @@ input-check = []
 network-check = []
 controller = ["frame-check"]
 display-check = ["dep:ssd1677", "dep:embedded-hal"]
+partial-check = ["display-check"]
 frame-check = ["display-check", "dep:png"]
 
 [dependencies]
@@ -44,6 +45,13 @@ esp-idf-svc = "=0.53.0"
 name = "controller"
 path = "src/control_main.rs"
 required-features = ["controller"]
+test = false
+bench = false
+
+[[bin]]
+name = "partial-check"
+path = "src/partial_main.rs"
+required-features = ["partial-check"]
 test = false
 bench = false
 

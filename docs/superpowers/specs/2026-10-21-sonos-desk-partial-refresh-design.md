@@ -132,3 +132,39 @@ design above and need the user's confirmation.
   activity, force); the C6 has no 64-bit atomics.
 - **The ETag no longer expires at 24 hours.** The 24-hour backstop redraws the
   cached frame instead, per the scheduling contract above.
+
+## Spike findings (2026-10-21, hardware: ESP32-C6 + Waveshare 3.97" HAT+)
+
+Method: throwaway `partial-check` image drew a synthetic now-playing screen
+(dithered 360 x 360 art, text bars, volume bar), then partially refreshed a
+volume-bar box (8 steps, then 20 alternating one-second updates), a title box
+and the art box, under four variants. Source: Waveshare's
+`EPD_3in97_Display_Partial` in the official demo archive.
+
+- **Sequence that works:** hardware reset (unless the panel is awake), `0x18 =
+  0x80`, `0x3c = 0x80`, data entry mode `0x11 = 0x03`, RAM window with
+  `0x44`/`0x45` and counters `0x4e`/`0x4f`, window data to `0x24`, then `0x22 =
+  0xff`, `0x20`, wait for BUSY. No deep-sleep command is needed between
+  partials. Vendor window ends are set as the start pixel of the last byte (x)
+  and last row (y).
+- **Orientation:** the 180-degree mounting maps a frame window to the same
+  rows and to x mirrored (RAM x = 800 - frame x). Data goes out row by row in
+  ascending RAM-y order, each row's bytes in reverse column order and
+  bit-reversed.
+- **Variants, all error-free:** (0) new plane only, (1) old window also written
+  to `0x26`, (2) variant 0 without the reset when already awake, (3) variant 1
+  without that reset.
+- **Timing:** full draw about 3.1 s. Partial: volume-bar box 512-564 ms, title
+  box 563-666 ms, art box 651-840 ms; no slowdown across a 20-update burst.
+  Skipping the reset saves about 45 ms.
+- **Visual result (user):** updates are clean, ghosting not noticeable, no
+  whole-screen flash. The art region needed no localized flash. The user did not
+  distinguish between the variants.
+- **Not tested:** whether RAM contents survive `PWR` low, and partial quality
+  after hours of use. Because it is unknown, Task 3 must write the old window to
+  `0x26` on every partial (variant 1), keep `PWR` high while partials are
+  active, and write both planes in full after any power-off before the first
+  partial.
+- **Chosen for implementation:** variant 1 (reset each time, old plane
+  written). It is robust to deep sleep and power-off, and costs about 45 ms over
+  variant 3.
