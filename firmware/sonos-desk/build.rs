@@ -1,7 +1,9 @@
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("espidf") {
         embuild::espidf::sysenv::output();
-        if std::env::var_os("CARGO_FEATURE_NETWORK_CHECK").is_some() {
+        if std::env::var_os("CARGO_FEATURE_NETWORK_CHECK").is_some()
+            || std::env::var_os("CARGO_FEATURE_CONTROLLER").is_some()
+        {
             println!("cargo:rerun-if-env-changed=SONOS_DESK_CONFIG_DIR");
             let config_dir = std::env::var_os("SONOS_DESK_CONFIG_DIR")
                 .map(std::path::PathBuf::from)

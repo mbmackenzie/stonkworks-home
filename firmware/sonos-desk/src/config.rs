@@ -7,6 +7,7 @@ pub struct Config {
     pub wifi: Wifi,
     pub mqtt: Mqtt,
     pub ntp_server: String,
+    pub room_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +52,9 @@ impl Config {
         }
         if config.mqtt.port == 0 {
             return Err("MQTT TLS port must be nonzero");
+        }
+        if config.room_id.as_ref().is_some_and(|id| !identifier(id)) {
+            return Err("Room ID requires 1–64 letters, digits, underscores or hyphens");
         }
         if !identifier(&config.mqtt.client_id) || !identifier(&config.mqtt.instance) {
             return Err(

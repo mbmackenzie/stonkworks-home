@@ -1,22 +1,36 @@
-use std::ffi::CStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::thread;
-use std::time::{Duration, Instant};
-
+use crate::mqtt::{Connection, MqttEvent};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
-use esp_idf_svc::mqtt::client::{
-    EspMqttClient, EventPayload, Mqtt5ConnectionPropertyConfig, MqttClientConfiguration,
-    MqttProtocolVersion, QoS,
-};
 use esp_idf_svc::sntp::{EspSntp, SntpConf, SyncStatus};
-use esp_idf_svc::tls::X509;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
-use sonos_desk_firmware::config::Config;
+use sonos_desk_firmware::{
+    config::Config,
+    controller::{Controller, ControllerConfig, Effect, Event, Time},
+    inputs::InputEvent,
+    protocol::Observation,
+};
+use std::ffi::CStr;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+    mpsc::Receiver,
+};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
-pub fn run(modem: Modem<'static>, config: Config, ca: &'static CStr) -> anyhow::Result<()> {
+pub struct ControlIo {
+    pub gate: Arc<AtomicU32>,
+    pub receiver: Receiver<(u32, u64, InputEvent)>,
+    pub start: Instant,
+}
+
+pub fn run(
+    modem: Modem<'static>,
+    config: Config,
+    ca: &'static CStr,
+    io: Option<ControlIo>,
+) -> anyhow::Result<()> {
     let event_loop = EspSystemEventLoop::take()?;
     // None keeps Wi-Fi settings in RAM rather than storing another credential copy in NVS.
     let mut wifi = BlockingWifi::wrap(EspWifi::new(modem, event_loop.clone(), None)?, event_loop)?;
@@ -46,6 +60,7 @@ pub fn run(modem: Modem<'static>, config: Config, ca: &'static CStr) -> anyhow::
     let mut clock_ready = false;
     let mut backoff_seconds = 1_u64;
 
+    let mut generation = 0_u32;
     loop {
         // The library owns Wi-Fi, SNTP and TLS. We only sequence them and report status.
         let result = (|| -> anyhow::Result<()> {
@@ -70,7 +85,14 @@ pub fn run(modem: Modem<'static>, config: Config, ca: &'static CStr) -> anyhow::
                 clock_ready = true;
                 println!("Clock: synchronized; TLS certificate validation enabled");
             }
-            mqtt_session(&wifi, &config, ca, &mut backoff_seconds)
+            mqtt_session(
+                &wifi,
+                &config,
+                ca,
+                &mut backoff_seconds,
+                io.as_ref(),
+                &mut generation,
+            )
         })();
 
         if result.is_err() {
@@ -84,92 +106,191 @@ pub fn run(modem: Modem<'static>, config: Config, ca: &'static CStr) -> anyhow::
     }
 }
 
-enum MqttEvent {
-    Connected,
-    Subscribed,
-    Availability,
-    Disconnected,
-    Error,
-}
-
 fn mqtt_session(
     wifi: &BlockingWifi<EspWifi<'static>>,
     config: &Config,
     ca: &'static CStr,
     backoff_seconds: &mut u64,
+    io: Option<&ControlIo>,
+    generation: &mut u32,
 ) -> anyhow::Result<()> {
-    let topic = format!(
-        "stonkworks/v1/sonos-desk/{}/availability",
-        config.mqtt.instance
-    );
-    let url = format!("mqtts://{}:{}", config.mqtt.host, config.mqtt.port);
-    let (sender, receiver) = mpsc::sync_channel(8);
-    let overflow = Arc::new(AtomicBool::new(false));
-    let callback_overflow = overflow.clone();
+    let base = format!("stonkworks/v1/sonos-desk/{}/", config.mqtt.instance);
+    let gate = io.map_or_else(|| Arc::new(AtomicU32::new(0)), |io| io.gate.clone());
+    let mut controller = io.map(|_| {
+        Controller::new(ControllerConfig {
+            instance: config.mqtt.instance.clone(),
+            client_id: config.mqtt.client_id.clone(),
+            room_id: config.room_id.clone().unwrap(),
+        })
+    });
     println!("MQTT: connecting with verified TLS and MQTT 5");
-
-    let mut client = EspMqttClient::new_cb(
-        &url,
-        &MqttClientConfiguration {
-            client_id: Some(&config.mqtt.client_id),
-            username: Some(&config.mqtt.username),
-            password: Some(&config.mqtt.password),
-            protocol_version: Some(MqttProtocolVersion::V5),
-            mqtt5_connection_property: Some(Mqtt5ConnectionPropertyConfig {
-                session_expiry_interval: Some(0),
-                ..Default::default()
-            }),
-            server_certificate: Some(X509::pem(ca)),
-            reconnect_timeout: None, // The owner below creates a fresh client on reconnect.
-            keep_alive_interval: Some(Duration::from_secs(15)),
-            network_timeout: Duration::from_secs(5),
-            ..Default::default() // Clean Start; certificate and hostname checks stay enabled.
-        },
-        move |event| {
-            let message = match event.payload() {
-                EventPayload::Connected(_) => MqttEvent::Connected,
-                EventPayload::Subscribed(_) => MqttEvent::Subscribed,
-                EventPayload::Received { .. } => MqttEvent::Availability,
-                EventPayload::Disconnected => MqttEvent::Disconnected,
-                EventPayload::Error(_) => MqttEvent::Error,
-                _ => return,
-            };
-            // Never block the SDK callback or print a payload containing private data.
-            if sender.try_send(message).is_err() {
-                callback_overflow.store(true, Ordering::Relaxed);
-            }
-        },
-    )?;
+    let mut connection = Connection::new(config, ca, gate.clone())?;
+    let start = io.map_or_else(Instant::now, |io| io.start);
+    let now = || Time {
+        ms: start.elapsed().as_millis() as u64,
+        utc_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_millis() as i64),
+    };
     let deadline = Instant::now() + Duration::from_secs(15);
-    let mut connected = false;
-    loop {
-        anyhow::ensure!(
-            wifi.is_up()? && !overflow.load(Ordering::Relaxed),
-            "Connection lost"
-        );
-        anyhow::ensure!(
-            connected || Instant::now() < deadline,
-            "MQTT connection timed out"
-        );
-        match receiver.recv_timeout(Duration::from_millis(100)) {
-            Ok(MqttEvent::Connected) => {
-                connected = true;
-                *backoff_seconds = 1;
-                println!("MQTT: connected over verified TLS");
-                client.subscribe(&topic, QoS::AtLeastOnce)?;
+    let mut subscribed = false;
+    let mut subscriptions = Vec::new();
+    let result = (|| -> anyhow::Result<()> {
+        loop {
+            anyhow::ensure!(wifi.is_up()? && connection.alive(), "Connection lost");
+            anyhow::ensure!(
+                subscribed || Instant::now() < deadline,
+                "MQTT subscriptions timed out"
+            );
+            // Drain network observations before accepting physical input.
+            while let Some(event) = connection.next() {
+                match event {
+                    MqttEvent::Connected => {
+                        println!("MQTT: connected over verified TLS");
+                        *backoff_seconds = 1;
+                        let mut topics = vec!["availability".to_string()];
+                        if let Some(controller) = &controller {
+                            topics.extend([
+                                "rooms".into(),
+                                format!("rooms/{}/state", controller.config.room_id),
+                                format!("rooms/{}/availability", controller.config.room_id),
+                                format!("clients/{}/results", controller.config.client_id),
+                            ]);
+                        }
+                        for topic in topics {
+                            subscriptions.push(connection.subscribe(&format!("{base}{topic}"))?);
+                        }
+                    }
+                    MqttEvent::Subscribed(id) => {
+                        if let Some(index) = subscriptions.iter().position(|pending| *pending == id)
+                        {
+                            subscriptions.swap_remove(index);
+                        }
+                        if subscriptions.is_empty() {
+                            subscribed = true;
+                            println!("MQTT: required QoS 1 subscriptions acknowledged");
+                            if let Some(controller) = &mut controller {
+                                apply(
+                                    controller,
+                                    Event::Subscribed,
+                                    now(),
+                                    &mut connection,
+                                    &gate,
+                                    generation,
+                                )?;
+                            }
+                        }
+                    }
+                    MqttEvent::Message(topic, data) => {
+                        if let Some(controller) = &mut controller {
+                            let relative = topic
+                                .strip_prefix(&base)
+                                .ok_or_else(|| anyhow::anyhow!("Unexpected topic"))?;
+                            let observation =
+                                Observation::parse(relative, &data, &controller.config)
+                                    .map_err(|_| anyhow::anyhow!("Invalid MQTT update"))?;
+                            apply(
+                                controller,
+                                Event::Observation(observation),
+                                now(),
+                                &mut connection,
+                                &gate,
+                                generation,
+                            )?;
+                        } else {
+                            println!(
+                                "MQTT: service availability received (controls remain disabled)"
+                            );
+                        }
+                    }
+                }
             }
-            Ok(MqttEvent::Subscribed) => {
-                println!("MQTT: subscription acknowledged; waiting for service availability")
+            if let Some(controller) = &mut controller {
+                apply(
+                    controller,
+                    Event::Tick,
+                    now(),
+                    &mut connection,
+                    &gate,
+                    generation,
+                )?;
+                if let Some(io) = io {
+                    while let Ok((input_generation, input_ms, input)) = io.receiver.try_recv() {
+                        let time = now();
+                        if gate.load(Ordering::Acquire) == input_generation
+                            && input_generation != 0
+                            && time.ms.saturating_sub(input_ms) < 100
+                        {
+                            apply(
+                                controller,
+                                Event::Input(input),
+                                time,
+                                &mut connection,
+                                &gate,
+                                generation,
+                            )?;
+                        }
+                    }
+                }
             }
-            Ok(MqttEvent::Availability) => {
-                println!("MQTT: service availability received (controls remain disabled)")
+            thread::sleep(Duration::from_millis(5));
+        }
+    })();
+    gate.store(0, Ordering::Release);
+    if let Some(controller) = &mut controller {
+        for effect in controller.handle(Event::Disconnected, now(), &mut random_id) {
+            if let Effect::Log(message) = effect {
+                println!("{message}");
             }
-            Ok(MqttEvent::Disconnected | MqttEvent::Error) => {
-                anyhow::bail!("MQTT disconnected; check broker, credentials and CA");
+        }
+        println!("Controller: unavailable; inputs discarded");
+    }
+    result // Dropping Connection destroys the SDK outbox; reconnect starts empty.
+}
+
+fn apply(
+    controller: &mut Controller,
+    event: Event,
+    now: Time,
+    connection: &mut Connection,
+    gate: &AtomicU32,
+    generation: &mut u32,
+) -> anyhow::Result<()> {
+    for effect in controller.handle(event, now, &mut random_id) {
+        match effect {
+            Effect::Ready(ready) => {
+                if ready {
+                    anyhow::ensure!(connection.alive(), "Connection lost");
+                    *generation = generation.wrapping_add(1).max(1);
+                    gate.store(*generation, Ordering::Release);
+                    println!("Controller: ready");
+                } else {
+                    gate.store(0, Ordering::Release);
+                    println!("Controller: unavailable; inputs discarded");
+                }
             }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => anyhow::bail!("MQTT event stream closed"),
+            Effect::Publish(command) => {
+                if connection.publish(&command, now.ms).is_err() {
+                    gate.store(0, Ordering::Release);
+                    controller.handle(
+                        Event::PublishFailed(command.request_id),
+                        now,
+                        &mut random_id,
+                    );
+                    println!("Command: outcome uncertain; connection discarded, no retry");
+                    anyhow::bail!("Publish failed");
+                }
+            }
+            Effect::Log(message) => println!("{message}"),
         }
     }
-    // Returning drops the client and its outbox before the owner retries.
+    Ok(())
+}
+
+fn random_id() -> Uuid {
+    let mut bytes = [0_u8; 16];
+    // Wi-Fi remains enabled, so ESP-IDF's hardware RNG has its RF entropy source.
+    unsafe { esp_idf_svc::sys::esp_fill_random(bytes.as_mut_ptr().cast(), bytes.len()) };
+    uuid::Builder::from_random_bytes(bytes).into_uuid()
 }

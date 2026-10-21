@@ -3,7 +3,8 @@
 Rust firmware is being built in small learning chunks. The portable input
 decoder has an ESP32-C6 GPIO reader and a USB input-check binary. A separate
 network-check binary adds Wi-Fi, clock synchronization, and read-only MQTT 5
-over verified TLS. Sonos commands and display rendering come later.
+over verified TLS. The controller binary sends Sonos commands from physical
+inputs. Display rendering comes later.
 The input decoder uses the small [`tamer`](https://docs.rs/tamer/0.1.0/) crate
 for debounce and quadrature decoding. The device binary uses ESP-IDF through
 Rust bindings. We keep the mapping to our controls in this repository.
@@ -23,8 +24,8 @@ events: previous, play/pause, next, mute, or a volume step.
 
 `Levels` is a snapshot of all six inputs: four switches (including the
 encoder's push switch) and the encoder's two rotation contacts. Switch values
-are normalized: `true` means pressed. Later, the GPIO adapter will translate
-the physical voltage levels into this representation.
+are normalized: `true` means pressed. The GPIO adapter translates physical
+voltage levels into this representation.
 
 `Inputs` delegates to `tamer::EdgeDetector` for each switch and
 `tamer::QuadratureDecoder` for rotation. The caller supplies elapsed
@@ -43,7 +44,7 @@ Actual direction and transitions per physical click still need checking on
 the KY-040; this is a starting calibration, not a hardware validation.
 
 `disarm()` forgets partial rotation and suppresses held button presses. The
-future connection handler will use it to prevent offline inputs from turning
+connection handler uses it to prevent offline inputs from turning
 into actions after reconnecting. It waits for the encoder's resting contacts
 before accepting a new rotation sequence.
 
@@ -99,10 +100,11 @@ setup downloads several GB; later builds reuse them. All generated tools,
 SDK files, and binaries are excluded from Git.
 
 After checking the wiring, flashing this image replaces the board's current
-application. To flash and open a serial monitor:
+application. Close any monitor first, then flash and reopen it:
 
 ```sh
-espflash flash --chip esp32c6 --monitor target/riscv32imac-esp-espidf/debug/input-check
+just firmware-flash input-check
+just firmware-monitor
 ```
 
 Choose the correct USB device if prompted. To reopen the monitor without
@@ -238,3 +240,103 @@ observed Wi-Fi/DHCP, NTP synchronization, verified TLS MQTT connection,
 subscription acknowledgment, and service availability receipt. The display
 remained disconnected. Input operation alongside networking, deliberate
 connection failures, and reconnect recovery remain manual acceptance checks.
+
+## Controller chunk
+
+The `controller` image connects the same GPIO inputs to the existing Sonos
+MQTT protocol. Keep the display disconnected for this milestone. Add the
+stable speaker ID as top-level `room_id` in the ignored local configuration;
+find it in the service's `/rooms` response. A room's display name is not its ID.
+The network-check image still works without this assignment and sends no commands.
+
+From this directory, with the USB monitor closed:
+
+```sh
+just firmware-build controller
+just firmware-flash controller
+just firmware-monitor
+```
+
+Wait for `Controller: ready` before testing physical controls. This image
+changes real playback in the configured room when you press or turn them.
+
+| Input | Command |
+| --- | --- |
+| Previous / play-pause / next | `previous` / `play_pause` / `next` |
+| Clockwise / counterclockwise click | `volume_relative`, +1 / -1 |
+| Encoder press | `mute`, inverse of confirmed room mute state |
+
+[`src/controller.rs`](src/controller.rs) is the small portable decision layer.
+It accepts input, observations, and time, then returns effects to send or log.
+It requires all five QoS 1 subscriptions plus matching fresh inventory, room
+state, room availability, and an online service session. Observations age out
+at 45 seconds; future skew up to five seconds is allowed. Inputs while unready
+are discarded, and entering ready disarms held buttons and partial rotation.
+
+Volume clicks are summed in a fixed 100 ms window, clamped to ±100, and a
+net-zero batch is omitted. Four pending commands are allowed; overload drops
+new actions. Each command gets a fresh UUID. A mute guard prevents repeated
+presses from toggling unconfirmed state. Results correlate by request, client,
+room, and service session; older results cannot overwrite newer room state.
+A missing result after 15 seconds is uncertain and is never retried.
+
+[`src/mqtt.rs`](src/mqtt.rs) keeps the SDK client on one owner task. The SDK
+handles Wi-Fi, SNTP, TLS, and MQTT; Serde/serde_json, time, and uuid handle the
+wire format, timestamps, and IDs. Incoming messages are assembled up to 32 KiB,
+with a bounded callback queue and 64 KiB aggregate payload budget. Overflow,
+malformed updates, failed subscriptions, or disconnects disable control and
+rebuild the connection. Input queues carry a readiness generation and timestamp;
+stale events cannot become commands after reconnect.
+
+The pinned safe MQTT wrapper omits PUBLISH expiry, SUBACK grant codes, and
+retransmission timing. Narrow SDK calls fill those gaps: only granted QoS 1
+subscriptions count; each publication sets remaining expiry (at most five
+seconds), QoS 1, retain off. Properties remain allocated until SDK destruction.
+The stock outbox reuses encoded expiry on retransmit, so commands expire from
+its outbox after five seconds, before its ten-second retransmission threshold.
+The SDK sweeps expired entries before retransmit selection, refuses publishing
+while disconnected, and has auto-reconnect disabled. Dropping the client
+clears its outbox before a replacement is created. An SDK upgrade must recheck
+these assumptions against `mqtt_client.c`, `mqtt5_client.c`, and `mqtt_outbox.c`.
+
+A successful input logs `Command: sent ...` then `Command: completed`.
+`sent` alone is a transport submission, not proof of speaker execution.
+Rejection, uncertainty, timeout, and connection loss never trigger an automatic
+application retry. Inspect room state before choosing another physical action.
+
+The dedicated device account needs read access below its instance prefix to
+`availability`, `rooms`, `rooms/<room_id>/state`,
+`rooms/<room_id>/availability`, and `clients/<client_id>/results`; grant write
+access only to `rooms/<room_id>/command`. Readiness cannot establish command
+write permission; the first actual command/result verifies that path.
+
+Verification uses seven host tests in one file: two input traces, one local
+configuration check, and four controller scenarios. There is no broker test
+framework. From this directory:
+
+```sh
+cargo test --locked --all-features
+cargo clippy --locked --all-features --all-targets -- -D warnings
+cargo fmt --check
+# Use the PATH setup above for the target check:
+cargo clippy --locked -Zbuild-std=std,panic_abort --target riscv32imac-esp-espidf --all-features --bins -- -D warnings
+```
+
+Hardware acceptance (2026-10-20): controller flashed, reached ready, and the
+user confirmed it controlled Sonos. USB logs showed volume batches in both
+directions, previous, play/pause, and mute with completed results. The reviewed
+mute-guard correction was reflashed and reached ready. Browser state
+remains available from the existing Sonos Desk HTTP service.
+
+Remaining opt-in checks:
+
+- [ ] Confirm next, one action per press, repeated mute guard behavior, holds, and boot with a button held.
+- [ ] Inspect an isolated command in MQTTX: fresh UUID/session, QoS 1, retain off, expiry ≤5 seconds, correct value omission/type.
+- [ ] On isolated topics, withhold PUBACK/disconnect and reconnect; verify no old command returns.
+- [ ] Interrupt connectivity while operating inputs; verify recovery accepts only new presses/complete clicks.
+- [ ] Exercise service restart, wrong CA/hostname/account, and unavailable NTP; none may bypass readiness.
+
+These fault/wire checks have not been performed. Host tests and successful
+live controls do not establish those hardware/broker failure cases. Synthetic
+room updates belong only on an isolated instance with a separate account;
+never publish them over the household service's state topics.

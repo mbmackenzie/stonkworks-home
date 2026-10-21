@@ -1,6 +1,7 @@
 # Copy to config.local.toml. Keep actual settings and credentials out of Git.
 # Prefer a local NTP server if normal operation must work without Internet.
 ntp_server = "time.example.test"
+room_id = "RINCON_00000000000101400"
 
 [wifi]
 ssid = "YOUR_WIFI_NAME"
