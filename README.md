@@ -23,7 +23,7 @@ The `frame-check` image fetches and displays one monochrome Sonos frame over HTT
 The controller redraws the screen with partial refreshes when volume, playback or the track changes, with idle cleanup, while MQTT controls run.
 Home management is future work. Existing household applications remain outside this project.
 
-## Run from source
+## Deploy from GHCR
 
 Copy `deploy/stacks/sonos-desk/.env.example` to `.env` in the same directory
 and replace its documentation address with this host's trusted LAN IPv4 address.
@@ -31,13 +31,43 @@ Then run from the repository root:
 
 ```sh
 docker compose -f deploy/stacks/sonos-desk/compose.yaml config --quiet
-docker compose -f deploy/stacks/sonos-desk/compose.yaml up -d --build
+docker compose -f deploy/stacks/sonos-desk/compose.yaml pull
+docker compose -f deploy/stacks/sonos-desk/compose.yaml up -d --no-build
 ```
 
 Open `http://<LAN-IP>:8008/`. The API has no authentication: use a trusted LAN.
 Linux host networking supports SSDP discovery. No persistent volume is needed.
 The image alone defaults to loopback; Compose explicitly sets the LAN listener.
 Keep one worker to preserve shared command locks and caches.
+
+GitHub Actions runs tests, Ruff, and ty on pull requests and pushes to `main`,
+then builds the service image for `linux/amd64` and `linux/arm64`. Pull requests
+only build; successful `main` runs publish to `ghcr.io/mbmackenzie/sonos-desk`
+with `main` and `sha-<full-commit>` tags. The workflow can also be run manually;
+only runs on `main` publish. Publishing uses the built-in `GITHUB_TOKEN` with
+`packages: write`, without a separate registry publishing secret.
+
+The first successful workflow run after merging creates the package. GHCR packages
+start private; to pull a private image on a deployment host, authenticate with
+`docker login ghcr.io` using an account with package access and a classic personal
+access token with `read:packages`. Making the package public is a separate,
+explicit publication decision. See [GitHub's registry guidance](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+
+For repeatable upgrades, set `SONOS_DESK_IMAGE` in the local `.env` to the
+`ghcr.io/mbmackenzie/sonos-desk@sha256:...` reference printed in the publishing
+run's summary, then run `pull` and `up -d --no-build` above. Save the previous
+digest to roll back with the same commands. The default `main` tag follows
+successful builds and can change. Dockge/Compose manages deployment; the workflow
+does not connect to household hosts or update running services.
+
+To build from this checkout instead, add the source-build overlay:
+
+```sh
+docker compose -f deploy/stacks/sonos-desk/compose.yaml \
+  -f deploy/stacks/sonos-desk/compose.build.yaml up -d --build
+```
+
+The optional MQTT overlay can be combined with either deployment mode.
 
 ## Development
 
@@ -54,6 +84,8 @@ Run locally with `uv run --package sonos-desk sonos-desk`, which listens on
 
 ## Distribution status
 
-This is a local source extraction. No registry release or firmware is published.
-License selection and publication are pending; no open-source license is granted
-yet. Household deployment definitions remain in their installation repository.
+The repository includes a GHCR publishing workflow; an image is available only
+after a successful publishing run. No versioned registry release or firmware
+release has been made. License selection and public distribution remain pending;
+no open-source license is granted yet. Household deployment definitions remain
+in their installation repository.
