@@ -16,12 +16,13 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
     let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take()?;
     let start = Instant::now();
     let gate = Arc::new(AtomicU32::new(0));
+    let link = Arc::new(DisplayLink::default());
     let (sender, receiver) = mpsc::sync_channel(8);
     let sink = controls.then(|| device::InputSink {
         gate: gate.clone(),
         sender,
+        link: link.clone(),
     });
-    let link = Arc::new(DisplayLink::default());
     let network_gate = gate.clone();
     let network_link = link.clone();
     std::thread::Builder::new()

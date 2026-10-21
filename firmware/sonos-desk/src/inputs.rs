@@ -19,9 +19,13 @@ pub enum InputEvent {
     Next,
     Mute,
     Volume(i8),
+    /// Mute held for two seconds: redraw the whole screen. Never reaches the controller.
+    Refresh,
 }
 
 const DEBOUNCE_MS: u64 = 20;
+const MUTE_HOLD_MS: u64 = 2_000;
+const MUTE: usize = 3;
 
 pub struct Inputs {
     buttons: [EdgeDetector; 4],
@@ -29,6 +33,8 @@ pub struct Inputs {
     encoder_previous: (bool, bool),
     encoder_rest: (bool, bool),
     syncing: bool,
+    mute_down: Option<u64>,
+    mute_held: bool,
 }
 
 impl Inputs {
@@ -41,6 +47,8 @@ impl Inputs {
             encoder_previous: (levels.a, levels.b),
             encoder_rest: (levels.a, levels.b),
             syncing: false,
+            mute_down: None,
+            mute_held: false,
         }
     }
 
@@ -52,13 +60,38 @@ impl Inputs {
             InputEvent::Next,
             InputEvent::Mute,
         ];
-        for ((button, pressed), action) in
-            self.buttons.iter_mut().zip(levels.buttons()).zip(actions)
+        let (mut down, mut held) = (self.mute_down, self.mute_held);
+        for (index, ((button, pressed), action)) in self
+            .buttons
+            .iter_mut()
+            .zip(levels.buttons())
+            .zip(actions)
+            .enumerate()
         {
-            if button.update(pressed, now_ms) == Some(Edge::Rising) {
-                events.push(action);
+            let edge = button.update(pressed, now_ms);
+            if index != MUTE {
+                if edge == Some(Edge::Rising) {
+                    events.push(action);
+                }
+                continue;
+            }
+            // Mute acts on release so that holding it can mean something else.
+            match (edge, down) {
+                (Some(Edge::Rising), _) => (down, held) = (Some(now_ms), false),
+                (Some(Edge::Falling), Some(_)) => {
+                    if !held {
+                        events.push(InputEvent::Mute);
+                    }
+                    down = None;
+                }
+                (None, Some(since)) if !held && now_ms.saturating_sub(since) >= MUTE_HOLD_MS => {
+                    held = true;
+                    events.push(InputEvent::Refresh);
+                }
+                _ => {}
             }
         }
+        (self.mute_down, self.mute_held) = (down, held);
 
         let current = (levels.a, levels.b);
         if self.syncing {
@@ -89,6 +122,7 @@ impl Inputs {
         self.encoder = QuadratureDecoder::new(self.encoder_rest.0, self.encoder_rest.1, 4);
         self.encoder_previous = (levels.a, levels.b);
         self.syncing = self.encoder_previous != self.encoder_rest;
+        (self.mute_down, self.mute_held) = (None, false);
     }
 }
 

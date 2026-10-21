@@ -40,15 +40,13 @@ fn buttons_require_stable_press_and_release() {
         (0, InputEvent::Previous),
         (1, InputEvent::PlayPause),
         (2, InputEvent::Next),
-        (3, InputEvent::Mute),
     ] {
         let levels = |pressed| {
             let mut state = Levels::default();
             match button {
                 0 => state.previous = pressed,
                 1 => state.play_pause = pressed,
-                2 => state.next = pressed,
-                _ => state.mute = pressed,
+                _ => state.next = pressed,
             }
             state
         };
@@ -449,4 +447,39 @@ fn display_wakes_only_on_visible_changes() {
         state(&mut c, 9300, "2026-10-17T00:00:10Z", other, "Song", 60),
         0
     ); // Wrong session.
+}
+
+#[test]
+fn mute_acts_on_release_and_long_hold_requests_refresh() {
+    let mute = |pressed| Levels {
+        mute: pressed,
+        ..Levels::default()
+    };
+    // A short press toggles mute when released, not when pressed.
+    let mut inputs = Inputs::new(mute(false));
+    for time in [100, 120, 1000] {
+        assert!(inputs.sample(mute(true), time).is_empty());
+    }
+    assert!(inputs.sample(mute(false), 1100).is_empty());
+    assert_eq!(inputs.sample(mute(false), 1120), vec![InputEvent::Mute]);
+
+    // Holding for two seconds asks for a full refresh, once, and never toggles mute.
+    let mut inputs = Inputs::new(mute(false));
+    for time in [100, 120, 2_119] {
+        assert!(inputs.sample(mute(true), time).is_empty());
+    }
+    assert_eq!(inputs.sample(mute(true), 2_120), vec![InputEvent::Refresh]);
+    assert!(inputs.sample(mute(true), 4_000).is_empty());
+    assert!(inputs.sample(mute(false), 4_100).is_empty());
+    assert!(inputs.sample(mute(false), 4_130).is_empty());
+
+    // Losing the connection mid-hold forgets the press.
+    let mut inputs = Inputs::new(mute(false));
+    for time in [100, 120] {
+        assert!(inputs.sample(mute(true), time).is_empty());
+    }
+    inputs.disarm(mute(true));
+    assert!(inputs.sample(mute(true), 5_000).is_empty());
+    assert!(inputs.sample(mute(false), 5_100).is_empty());
+    assert!(inputs.sample(mute(false), 5_130).is_empty());
 }

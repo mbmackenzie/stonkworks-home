@@ -184,6 +184,7 @@ impl Controller {
                             );
                         }
                     }
+                    InputEvent::Refresh => {}
                     input => self.send(
                         match input {
                             InputEvent::Previous => "previous",

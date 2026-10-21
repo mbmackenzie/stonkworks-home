@@ -17,11 +17,15 @@ pub struct InputPins {
     pub b: gpio::Gpio1<'static>,
 }
 
-use sonos_desk_firmware::inputs::{InputEvent, Inputs, Levels};
+use sonos_desk_firmware::{
+    inputs::{InputEvent, Inputs, Levels},
+    link::DisplayLink,
+};
 
 pub struct InputSink {
     pub gate: Arc<AtomicU32>,
     pub sender: SyncSender<(u32, u64, InputEvent)>,
+    pub link: Arc<DisplayLink>,
 }
 
 pub fn run_inputs(pins: Pins, start: Instant, sink: Option<InputSink>) -> anyhow::Result<()> {
@@ -97,10 +101,13 @@ pub fn run_control_inputs(
         }
         for input in inputs.sample(levels, now_ms) {
             println!("{now_ms:>8} ms  {input:?}");
-            if let Some(sink) = &sink
-                && generation != 0
-                && sink.sender.try_send((generation, now_ms, input)).is_err()
-            {
+            let Some(sink) = &sink else { continue };
+            sink.link.bump_activity();
+            if input == InputEvent::Refresh {
+                sink.link.bump_force(); // Local to the display; the controller never sees it.
+                continue;
+            }
+            if generation != 0 && sink.sender.try_send((generation, now_ms, input)).is_err() {
                 println!("Input: busy; dropped");
             }
         }
