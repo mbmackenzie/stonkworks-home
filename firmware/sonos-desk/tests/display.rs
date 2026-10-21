@@ -74,117 +74,6 @@ fn display_uses_vendor_sequence_and_stops_on_timeout() {
     }
 }
 
-// Guard the decoder against large contiguous allocations on the C6.
-#[cfg(feature = "frame-check")]
-mod allocation {
-    use std::{
-        alloc::{GlobalAlloc, Layout, System},
-        cell::Cell,
-    };
-    thread_local! { static LARGEST: Cell<Option<usize>> = const { Cell::new(None) }; }
-    struct Observed;
-    #[global_allocator]
-    static ALLOCATOR: Observed = Observed;
-    fn record(size: usize) {
-        let _ = LARGEST.try_with(|value| {
-            if let Some(previous) = value.get() {
-                value.set(Some(previous.max(size)));
-            }
-        });
-    }
-    unsafe impl GlobalAlloc for Observed {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            record(layout.size());
-            unsafe { System.alloc(layout) }
-        }
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            unsafe { System.dealloc(ptr, layout) }
-        }
-        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-            record(size);
-            unsafe { System.realloc(ptr, layout, size) }
-        }
-    }
-    pub fn measure<T>(run: impl FnOnce() -> T) -> (T, usize) {
-        LARGEST.set(Some(0));
-        let result = run();
-        (result, LARGEST.replace(None).unwrap())
-    }
-}
-
-#[cfg(feature = "frame-check")]
-#[test]
-fn frame_decoder_accepts_only_complete_mono_frames() {
-    use sonos_desk_firmware::frame::decode_png;
-    let encode = |width, height, samples: &[u8]| {
-        let mut bytes = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut bytes, width, height);
-            encoder.set_color(png::ColorType::Grayscale);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder
-                .write_header()
-                .unwrap()
-                .write_image_data(samples)
-                .unwrap();
-        }
-        bytes
-    };
-    let mut pixels = vec![255; 800 * 480];
-    pixels[0] = 0;
-    pixels[800 * 240 + 16] = 0;
-    pixels[800 * 480 - 1] = 0;
-    let bytes = encode(800, 480, &pixels);
-    let (frame, largest) = allocation::measure(|| decode_png(&bytes));
-    let frame = frame.unwrap();
-    assert!(
-        largest <= 64 * 1024,
-        "decoder requested {largest} contiguous bytes"
-    );
-    assert_eq!(frame[0], 0x7f);
-    assert_eq!(frame[240 * 100 + 2], 0x7f);
-    assert_eq!(frame[47_999], 0xfe);
-    assert_eq!(frame[100], 0xff);
-    assert!(decode_png(&bytes[..bytes.len() - 12]).is_err()); // Missing IEND.
-    let mut corrupt = bytes.clone();
-    corrupt[29] ^= 1; // IHDR CRC.
-    assert!(decode_png(&corrupt).is_err());
-    assert!(decode_png(&encode(8, 1, &[255; 8])).is_err());
-    pixels[1] = 85;
-    assert!(decode_png(&encode(800, 480, &pixels)).is_err()); // gray4 is not mono.
-    assert!(decode_png(&vec![0; 128 * 1024 + 1]).is_err());
-}
-
-#[cfg(feature = "frame-check")]
-#[test]
-fn changed_region_bounds_differences() {
-    use sonos_desk_firmware::frame::{Region, changed_region};
-    let old = [0xff; 48_000];
-    let mut new = old;
-    assert_eq!(changed_region(&old, &new), None);
-    new[3 * 100 + 2] = 0x7f; // Pixel (17, 3) lies in byte column 2.
-    assert_eq!(
-        changed_region(&old, &new),
-        Some(Region {
-            x0: 16,
-            x1: 24,
-            y0: 3,
-            y1: 4
-        })
-    );
-    new[0] = 0x00;
-    new[47_999] = 0x00;
-    assert_eq!(
-        changed_region(&old, &new),
-        Some(Region {
-            x0: 0,
-            x1: 800,
-            y0: 0,
-            y1: 480
-        })
-    );
-}
-
 fn ram_stream(frame: &[u8; 48_000]) -> Vec<u8> {
     let mut wire = Wire::default();
     show_frame(&mut wire, frame, &mut Delay).unwrap();
@@ -365,7 +254,7 @@ mod schedule {
         let mut s = shown(0);
         assert_eq!(drive(&mut s, signals(1, 0, 0), 1_000), Action::Wait);
         assert_eq!(drive(&mut s, signals(1, 0, 0), 1_150), Action::Wait);
-        s.partial_shown(E(), 1_150);
+        s.partial_shown(E());
         assert_eq!(drive(&mut s, signals(1, 1, 0), 30_000), Action::Wait); // Input resets idle.
         assert_eq!(drive(&mut s, signals(1, 1, 0), 89_999), Action::Wait);
         assert_eq!(drive(&mut s, signals(1, 1, 0), 90_000), Action::FullRefresh);
@@ -379,7 +268,7 @@ mod schedule {
     fn schedule_backstop_survives_partials_and_304() {
         const DAY: u64 = 86_400_000;
         let mut s = shown(0);
-        s.partial_shown(E(), DAY / 2); // Partials never advance the full-refresh clock.
+        s.partial_shown(E()); // Partials never advance the full-refresh clock.
         assert_eq!(drive(&mut s, signals(0, 1, 0), DAY), Action::Wait); // Active: deferred.
         assert_eq!(
             drive(&mut s, signals(0, 1, 0), DAY + 60_000),
@@ -400,7 +289,7 @@ mod schedule {
     #[test]
     fn schedule_cleans_up_shortly_after_a_content_change() {
         let mut s = shown(0);
-        s.partial_shown(E(), 1_150);
+        s.partial_shown(E());
         s.content_changed(1_150); // The art or the text changed.
         assert_eq!(drive(&mut s, signals(0, 0, 0), 4_000), Action::Wait);
         // Another content change restarts the wait, so skipping tracks cleans up once at the end.
@@ -414,7 +303,7 @@ mod schedule {
     #[test]
     fn schedule_ignores_presses_when_timing_a_content_cleanup() {
         let mut s = shown(0);
-        s.partial_shown(E(), 1_000);
+        s.partial_shown(E());
         s.content_changed(1_000);
         // Button presses are not what the cleanup waits for; the change is.
         assert_eq!(drive(&mut s, signals(0, 5, 0), 4_999), Action::Wait);
@@ -443,29 +332,6 @@ mod schedule {
         assert_eq!(s.update(Signals::default(), 179_999), Action::Wait);
         assert_eq!(s.update(Signals::default(), 180_000), Action::Fetch);
     }
-}
-
-#[cfg(feature = "frame-check")]
-#[test]
-fn frame_decoder_overwrites_a_reused_buffer() {
-    use sonos_desk_firmware::frame::{decode_png, decode_png_into};
-    let mut pixels = vec![255; 800 * 480];
-    pixels[800 * 100 + 40] = 0;
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut bytes, 800, 480);
-        encoder.set_color(png::ColorType::Grayscale);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder
-            .write_header()
-            .unwrap()
-            .write_image_data(&pixels)
-            .unwrap();
-    }
-    let mut reused = [0x00; 48_000]; // A previous frame's leftovers.
-    decode_png_into(&bytes, &mut reused).unwrap();
-    assert_eq!(&reused, &*decode_png(&bytes).unwrap());
-    assert!(decode_png_into(&bytes[..bytes.len() - 12], &mut reused).is_err());
 }
 
 #[cfg(feature = "frame-check")]

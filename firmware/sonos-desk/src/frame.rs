@@ -1,83 +1,4 @@
-//! Decode the existing mono HTTP contract into one packed panel buffer.
-use crate::panel::Frame;
-use std::io::{BufReader, Cursor};
-
-pub const MAX_PNG_BYTES: usize = 128 * 1024;
-
-pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
-    let mut frame: Frame = vec![0xff; 48_000]
-        .into_boxed_slice()
-        .try_into()
-        .map_err(|_| "Invalid framebuffer size")?;
-    decode_png_into(bytes, &mut frame)?;
-    Ok(frame)
-}
-
-/// Decode into a caller-owned buffer, so the device can reuse two long-lived frames
-/// instead of fragmenting its small heap with a fresh 48,000 bytes per update.
-/// The buffer is only meaningful when this returns `Ok`.
-pub fn decode_png_into(bytes: &[u8], frame: &mut [u8; 48_000]) -> Result<(), &'static str> {
-    if bytes.len() > MAX_PNG_BYTES {
-        return Err("PNG exceeds 128 KiB");
-    }
-    let mut decoder = png::Decoder::new_with_limits(
-        BufReader::with_capacity(1024, Cursor::new(bytes)),
-        png::Limits { bytes: 64 * 1024 },
-    );
-    decoder.set_decode_limits(
-        png::DecodeLimits::default()
-            .with_max_width(800)
-            .with_max_height(480)
-            .with_max_pixels(800 * 480)
-            .with_max_alloc_bytes(64 * 1024)
-            .with_max_chunk_len(MAX_PNG_BYTES as u32)
-            .with_max_unknown_chunk_bytes(0)
-            .with_max_frames(1),
-    );
-    decoder.set_ignore_text_chunk(true);
-    decoder.set_ignore_iccp_chunk(true);
-    // Check dimensions before read_info allocates its row/decompression buffers.
-    let info = decoder
-        .read_header_info()
-        .map_err(|_| "Invalid PNG header")?;
-    if info.width != 800
-        || info.height != 480
-        || info.bit_depth != png::BitDepth::Eight
-        || info.color_type != png::ColorType::Grayscale
-        || info.interlaced
-    {
-        return Err("Expected non-interlaced 800x480 grayscale8 PNG");
-    }
-    let mut reader = decoder.read_info().map_err(|_| "Invalid PNG")?;
-    if reader.info().animation_control.is_some() {
-        return Err("Animated PNG is unsupported");
-    }
-    frame.fill(0xff);
-    for y in 0..480 {
-        let row = reader
-            .next_row()
-            .map_err(|_| "Invalid PNG pixels")?
-            .ok_or("Incomplete PNG")?;
-        if row.data().len() != 800 {
-            return Err("Invalid PNG row length");
-        }
-        for (x, &pixel) in row.data().iter().enumerate() {
-            match pixel {
-                0 => frame[y * 100 + x / 8] &= !(0x80 >> (x % 8)),
-                255 => {}
-                _ => return Err("Expected mono pixels: 0 or 255"),
-            }
-        }
-    }
-    if reader.next_row().map_err(|_| "Invalid PNG end")?.is_some() {
-        return Err("Unexpected PNG rows");
-    }
-    reader
-        .finish()
-        .map_err(|_| "Incomplete or invalid PNG end")?;
-    Ok(())
-}
-
+//! Receive the packed bitmap HTTP contract and decide when the panel refreshes.
 pub use crate::link::{DisplayLink, Signals};
 
 /// Separate boxes for separate clusters of change (for example the art and the text),
@@ -162,31 +83,8 @@ pub fn fill_bitmap<E>(
     }
     Ok(())
 }
-pub use crate::panel::Region;
 
-/// Smallest byte-aligned box covering every differing byte, or `None` if identical.
-pub fn changed_region(old: &[u8; 48_000], new: &[u8; 48_000]) -> Option<Region> {
-    let mut bounds: Option<(u16, u16, u16, u16)> = None;
-    for (y, (old_row, new_row)) in old.chunks(100).zip(new.chunks(100)).enumerate() {
-        let mut differing = old_row
-            .iter()
-            .zip(new_row)
-            .enumerate()
-            .filter(|(_, (a, b))| a != b)
-            .map(|(column, _)| column as u16);
-        if let Some(first) = differing.next() {
-            let last = differing.next_back().unwrap_or(first);
-            let (x0, x1, y0, _) = bounds.unwrap_or((first, last, y as u16, 0));
-            bounds = Some((x0.min(first), x1.max(last), y0, y as u16));
-        }
-    }
-    bounds.map(|(x0, x1, y0, y1)| Region {
-        x0: x0 * 8,
-        x1: (x1 + 1) * 8,
-        y0,
-        y1: y1 + 1,
-    })
-}
+pub use crate::panel::Region;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
@@ -289,7 +187,7 @@ impl Schedule {
         self.content_at = Some(now_ms);
     }
 
-    pub fn partial_shown(&mut self, etag: Option<String>, _now_ms: u64) {
+    pub fn partial_shown(&mut self, etag: Option<String>) {
         self.etag = etag;
         self.partials += 1;
     }

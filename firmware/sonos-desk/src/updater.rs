@@ -6,7 +6,7 @@ use sonos_desk_firmware::{
     config::Config,
     frame::{Action, Schedule, changed_regions},
     link::DisplayLink,
-    panel::Frame,
+    panel::blank_frame,
 };
 use std::{
     sync::{
@@ -36,10 +36,10 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
     let now = || start.elapsed().as_millis() as u64;
     let mut schedule = Schedule::default();
     // Two long-lived frames, allocated before the heap fragments: `shown` is on the
-    // panel, `next` receives each decode. A fresh 48 KB per update starved the PNG
-    // decoder of its contiguous 32 KiB window.
-    let mut shown: Frame = blank();
-    let mut next: Frame = blank();
+    // panel, `next` receives each download. A fresh 48 KB per update would fragment
+    // the small heap.
+    let mut shown = blank_frame();
+    let mut next = blank_frame();
     let mut have_shown = false;
     let mut last_force = 0;
     heap("at start");
@@ -111,17 +111,15 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                                         disable(error);
                                     }
                                 }
-                                schedule.partial_shown(etag, now());
+                                schedule.partial_shown(etag);
                                 if content {
                                     schedule.content_changed(now());
                                 }
                             }
                         }
-                        // The panel call succeeded, so the decoded frame is what it shows.
-                        if !have_shown || next != shown {
-                            std::mem::swap(&mut shown, &mut next);
-                            have_shown = true;
-                        }
+                        // The panel call succeeded, so the downloaded frame is what it shows.
+                        std::mem::swap(&mut shown, &mut next);
+                        have_shown = true;
                         heap("after update");
                     }
                     Ok(None) => {}
@@ -133,11 +131,4 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
             }
         }
     }
-}
-
-fn blank() -> Frame {
-    vec![0xff; 48_000]
-        .into_boxed_slice()
-        .try_into()
-        .unwrap_or_else(|_| unreachable!())
 }

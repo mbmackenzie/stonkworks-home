@@ -206,8 +206,16 @@ pub fn show_partial<I: DisplayInterface, D: DelayNs>(
     Ok(())
 }
 
+/// An all-white frame.
+pub fn blank_frame() -> Frame {
+    vec![0xff; 48_000]
+        .into_boxed_slice()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!())
+}
+
 pub fn pattern() -> Frame {
-    let mut frame = vec![0xff; 48_000];
+    let mut frame = blank_frame();
     for y in 0_usize..480 {
         for x in 0_usize..800 {
             let border = !(8..792).contains(&x) || !(8..472).contains(&y);
@@ -228,7 +236,4 @@ pub fn pattern() -> Frame {
         }
     }
     frame
-        .into_boxed_slice()
-        .try_into()
-        .unwrap_or_else(|_| unreachable!())
 }

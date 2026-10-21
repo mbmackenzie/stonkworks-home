@@ -42,7 +42,7 @@ pub struct State {
 pub struct RoomStatus {
     pub status: Status,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 pub struct RoomState {
     pub room_id: String,
     #[serde(default)]

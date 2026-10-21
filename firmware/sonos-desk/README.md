@@ -426,28 +426,22 @@ just firmware-monitor
 ```
 
 This replaces the controller temporarily. On each boot it connects Wi-Fi,
-fetches `/frame?room=<configured-id>&mode=mono`, disconnects Wi-Fi, decodes the
-PNG, draws once in the confirmed orientation, and sleeps the panel. The power
+fetches `/frame?room=<configured-id>&mode=mono&format=bitmap`, disconnects Wi-Fi,
+draws once in the confirmed orientation, and sleeps the panel. The power
 pin stays low until the frame has been downloaded and validated. Errors stop
 without refreshing or retrying. Buttons do not control Sonos in this image.
 
-The download accepts a 200 `image/png` response, has a 128 KiB size cap,
-five-second socket timeout and twenty-second body deadline, and follows no
-redirects. Only complete, non-interlaced 800 × 480 grayscale PNGs with eight-bit
-black/white pixels are accepted. `oxiarc-png` supplies PNG/DEFLATE decoding;
-our small adapter packs rows into the panel's 48,000-byte buffer. A dedicated
-24 KiB worker handles this image. No custom image codec is implemented.
+The download accepts a 200 `application/octet-stream` response of exactly one
+48,000-byte packed frame, has a five-second socket timeout and twenty-second
+body deadline, and follows no redirects. A PNG, a truncated body, or a longer
+body is refused. The body is read straight into the panel buffer, so no image
+decoder is needed. A dedicated 24 KiB worker handles this image.
 
-The original PNG decoder passed host tests but requested a 205,312-byte buffer
-on the C6 and exhausted its heap. The replacement uses bounded row buffers.
-One focused decoder test checks packing, malformed input, format rejection,
-and a 64 KiB maximum individual allocation for its fixture. All nine host
-tests pass; that allocation guard does not measure total device memory use.
 This diagnostic remains one-shot. The controller adds live partial updates below;
 grayscale remains separate work.
 
-Hardware run (2026-10-21): the C6 fetched a 9,640-byte real Sonos frame,
-disconnected Wi-Fi, validated the PNG, and reported completed refresh, panel
+Hardware run (2026-10-21, with the earlier PNG download): the C6 fetched a
+9,640-byte real Sonos frame, disconnected Wi-Fi, validated the PNG, and reported completed refresh, panel
 sleep, and power-off without timeout or allocation failure. The user confirmed the Sonos artwork and text are upright and complete. That run used the frame-check image.
 
 

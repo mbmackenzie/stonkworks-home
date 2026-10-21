@@ -65,22 +65,6 @@ struct Pending {
     id: Uuid,
     deadline_ms: u64,
 }
-#[derive(PartialEq)]
-struct DisplayKey(String, String, String, String, String, u8, bool);
-impl DisplayKey {
-    fn new(state: &RoomState) -> Self {
-        Self(
-            state.title.clone(),
-            state.artist.clone(),
-            state.album.clone(),
-            state.artwork_url.clone(),
-            state.playback_state.clone(),
-            state.volume,
-            state.mute,
-        )
-    }
-}
-
 struct MuteGuard {
     id: Uuid,
     observed: i64,
@@ -97,7 +81,7 @@ pub struct Controller {
     pending: [Option<Pending>; 4],
     volume: Option<(u64, i16)>,
     mute: Option<MuteGuard>,
-    display: Option<DisplayKey>,
+    display: Option<RoomState>,
 }
 
 impl Controller {
@@ -309,12 +293,12 @@ impl Controller {
                 if let Some(stamp) = Stamp::new(snapshot.service_session, snapshot.observed_at, now)
                 {
                     let accepted = self.confirm(stamp, snapshot.data.state.mute, now);
-                    let key = DisplayKey::new(&snapshot.data.state);
+                    let state = snapshot.data.state;
                     if accepted
                         && self.session == Some(snapshot.service_session)
-                        && self.display.as_ref() != Some(&key)
+                        && self.display.as_ref() != Some(&state)
                     {
-                        self.display = Some(key);
+                        self.display = Some(state);
                         effects.push(Effect::DisplayChanged);
                     }
                 }

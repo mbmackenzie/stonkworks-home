@@ -51,7 +51,12 @@ class Renderer:
         self._owns_client = client is None
         self.client = httpx.Client(max_redirects=3, trust_env=False) if client is None else client
         self.clock = clock
-        self.artwork, self.frames, self.transport = OrderedDict(), OrderedDict(), OrderedDict()
+        self.artwork, self.frames, self.bitmaps, self.transport = (
+            OrderedDict(),
+            OrderedDict(),
+            OrderedDict(),
+            OrderedDict(),
+        )
         self.lock = threading.Lock()
 
     def close(self):
@@ -137,8 +142,16 @@ class Renderer:
 
     def bitmap(self, state):
         """The mono frame as 48,000 packed bytes: 100 per row, MSB first, 1 = white."""
-        with Image.open(BytesIO(self.frame(state, "mono"))) as image:
-            return image.convert("1", dither=Image.Dither.NONE).tobytes()
+        png = self.frame(state, "mono")
+        with self.lock:
+            if png in self.bitmaps:
+                self.bitmaps.move_to_end(png)
+                return self.bitmaps[png]
+        with Image.open(BytesIO(png)) as image:
+            packed = image.convert("1", dither=Image.Dither.NONE).tobytes()
+        with self.lock:
+            self._put(self.bitmaps, png, packed, 32)
+        return packed
 
     def frame(self, state, mode="gray4"):
         with self.lock:
