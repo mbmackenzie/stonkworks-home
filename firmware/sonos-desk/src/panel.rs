@@ -134,11 +134,15 @@ fn write_window<I: DisplayInterface>(
 /// changed window leaves everything outside it with "old" in the plane that now counts
 /// as new, so the next partial would draw the previous window back (hardware experiment,
 /// 2026-10-21). Writing the new window into both planes afterwards keeps them equal.
+///
+/// A single short drive leaves visible residue on thin strokes such as text, so `passes`
+/// repeats the same old-to-new drive that many times before the planes are synced.
 pub fn show_partial<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
     old: &[u8; 48_000],
     new: &[u8; 48_000],
     region: Region,
+    passes: u8,
     delay: &mut D,
 ) -> Result<(), I::Error> {
     io.busy_wait(delay)?;
@@ -146,15 +150,17 @@ pub fn show_partial<I: DisplayInterface, D: DelayNs>(
         io.send_command(command)?;
         io.send_data(&[data])?;
     }
-    for (command, frame) in [(0x26, old), (0x24, new)] {
-        set_window(io, region)?; // Each write moves the address counters.
-        write_window(io, command, frame, region)?;
+    for _ in 0..passes.max(1) {
+        for (command, frame) in [(0x26, old), (0x24, new)] {
+            set_window(io, region)?; // Each write moves the address counters.
+            write_window(io, command, frame, region)?;
+        }
+        io.send_command(0x22)?;
+        io.send_data(&[0xff])?; // Vendor partial mode.
+        io.send_command(0x20)?;
+        delay.delay_ms(10);
+        io.busy_wait(delay)?;
     }
-    io.send_command(0x22)?;
-    io.send_data(&[0xff])?; // Vendor partial mode.
-    io.send_command(0x20)?;
-    delay.delay_ms(10);
-    io.busy_wait(delay)?;
     for command in [0x26, 0x24] {
         set_window(io, region)?;
         write_window(io, command, new, region)?;

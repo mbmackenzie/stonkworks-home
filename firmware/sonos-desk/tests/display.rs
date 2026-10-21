@@ -210,7 +210,7 @@ fn partial_window_matches_full_ram_image() {
         y1: 437,
     };
     let mut wire = Wire::default();
-    show_partial(&mut wire, &old, &new, region, &mut Delay).unwrap();
+    show_partial(&mut wire, &old, &new, region, 1, &mut Delay).unwrap();
     // RAM x is mirrored (800 - x) and RAM y equals frame y; the full stream is sent from RAM y 479 down.
     let window = |ram: &[u8]| -> Vec<u8> {
         (421..437)
@@ -249,7 +249,7 @@ fn partial_window_matches_full_ram_image() {
         y0: 3,
         y1: 4,
     };
-    show_partial(&mut wire, &old, &new, tiny, &mut Delay).unwrap();
+    show_partial(&mut wire, &old, &new, tiny, 1, &mut Delay).unwrap();
     let data = |command| {
         wire.packets
             .iter()
@@ -279,7 +279,7 @@ fn partial_stops_on_busy_timeout() {
             ..Default::default()
         };
         assert_eq!(
-            show_partial(&mut wire, &old, &new, region, &mut Delay),
+            show_partial(&mut wire, &old, &new, region, 1, &mut Delay),
             Err("BUSY timeout")
         );
         assert_eq!(wire.packets.is_empty(), fail_wait == 1);
@@ -465,4 +465,51 @@ fn bitmap_body_must_be_exactly_one_frame() {
     assert!(fill_bitmap(chunked(&long, 1_000), &mut frame).is_err()); // Trailing byte.
     let failing = |_: &mut [u8]| -> Result<usize, &'static str> { Err("link down") };
     assert!(fill_bitmap(failing, &mut frame).is_err());
+}
+
+#[test]
+fn partial_repeats_the_drive_before_syncing_the_planes() {
+    let old = pattern();
+    let mut new = old.clone();
+    new[100 * 10..100 * 10 + 5].fill(0x00);
+    let region = Region {
+        x0: 0,
+        x1: 80,
+        y0: 10,
+        y1: 11,
+    };
+    let mut wire = Wire::default();
+    show_partial(&mut wire, &old, &new, region, 2, &mut Delay).unwrap();
+    let commands: Vec<u8> = wire.packets.iter().map(|p| p.0).collect();
+    let triggers: Vec<usize> = (0..commands.len())
+        .filter(|&i| commands[i] == 0x20)
+        .collect();
+    assert_eq!(triggers.len(), 2);
+    // Each pass rewrites old into 0x26 and new into 0x24, so the same pixels are driven again.
+    for (pass, &trigger) in triggers.iter().enumerate() {
+        let start = if pass == 0 { 0 } else { triggers[0] + 1 };
+        let planes: Vec<u8> = commands[start..trigger]
+            .iter()
+            .copied()
+            .filter(|c| *c == 0x26 || *c == 0x24)
+            .collect();
+        assert_eq!(planes, [0x26, 0x24]);
+    }
+    // Only after the last pass are both planes set to new.
+    let after: Vec<u8> = commands[triggers[1]..]
+        .iter()
+        .copied()
+        .filter(|c| *c == 0x26 || *c == 0x24)
+        .collect();
+    assert_eq!(after, [0x26, 0x24]);
+    let waits_fail = Wire {
+        fail_wait: Some(3),
+        ..Default::default()
+    };
+    let mut wire = waits_fail;
+    assert_eq!(
+        show_partial(&mut wire, &old, &new, region, 2, &mut Delay),
+        Err("BUSY timeout")
+    );
+    assert_eq!(wire.packets.iter().filter(|p| p.0 == 0x20).count(), 2); // Stops after pass two's wait.
 }

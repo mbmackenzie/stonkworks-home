@@ -9,6 +9,9 @@ use ssd1677::Interface;
 use std::thread;
 use std::time::Duration;
 
+/// Drive each partial this many times; one pass left visible text ghosting.
+const PARTIAL_PASSES: u8 = 2;
+
 pub struct DisplayPins {
     pub power: gpio::Gpio4<'static>,
     pub reset: gpio::Gpio22<'static>,
@@ -132,7 +135,7 @@ impl Panel {
             let mut io =
                 Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
             io.set_busy_timeout(15_000);
-            panel::show_partial(&mut io, old, new, region, &mut FreeRtos)
+            panel::show_partial(&mut io, old, new, region, PARTIAL_PASSES, &mut FreeRtos)
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             println!(
                 "Display: partial refresh finished in {} ms",
