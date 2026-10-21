@@ -9,7 +9,9 @@ network settings, and device assignments.
 
 The current implementation is the Sonos Desk source extraction: a FastAPI/SoCo
 backend, browser controller, Pillow e-ink renderer, and optional MQTT 5 adapter.
-Home management, device configuration contracts, device onboarding, firmware,
+Rust firmware development has started with a host-tested input decoder in
+`firmware/sonos-desk/`; GPIO, networking, and device execution are not implemented.
+Home management, device configuration contracts, device onboarding, device firmware,
 registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 
 Scope comes from the “Clarify Stonkworks Home Scope” conversation
@@ -51,6 +53,7 @@ current source and documentation to establish implemented behavior.
 - `services/sonos-desk/tests/`: simulated-speaker API, backend, and renderer
   tests; optional Playwright browser check and disposable-broker MQTT checks.
 - `protocols/v1/`: implemented Sonos MQTT topics, message schemas, and client usage.
+- `firmware/sonos-desk/`: portable Rust input decoder and its small host test suite.
 - `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example, optional
   MQTT overlay, and `.env.example`, not the household's deployed stack.
 - `docs/sonos-desk.md`: HTTP contract, command semantics, rendering, and polling.

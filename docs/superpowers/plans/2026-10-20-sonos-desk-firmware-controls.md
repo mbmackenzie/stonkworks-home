@@ -46,6 +46,11 @@ Modify root `.gitignore` and `README.md` to ignore generated/secrets files and l
 
 ## Task 1: Input decoding and USB bring-up
 
+Progress: the user requested small learning chunks during execution. Chunk 1
+implements portable input decoding with two passing host tests and a README
+walkthrough. GPIO/USB bring-up and target builds remain the next chunk; Task 1
+as a whole is not yet complete. Pause between learning chunks as requested.
+
 **Interfaces:** `Inputs::new(levels: Levels, now_ms: u64) -> Inputs`; `Inputs::sample(&mut self, levels: Levels, now_ms: u64) -> Vec<InputEvent>`; `Inputs::disarm(&mut self, levels: Levels, now_ms: u64)`. `Levels` holds previous/play/next/encoder-switch pressed flags and A/B levels; `InputEvent` is `Previous`, `PlayPause`, `Next`, `Mute`, or `Volume(i8)`. Emit at most five events per sample, preserving simultaneous presses.
 
 - [ ] Write two small table-driven tests: `buttons_require_stable_press_and_release` and `encoder_counts_complete_detents`. Assert bounce produces no extra press, 20 ms stable press produces one event, holds never repeat, initial held buttons require release, invalid quadrature jumps produce no step, and a complete calibrated detent produces exactly +1 or -1. Disarming resets partial motion and held-button eligibility.
