@@ -19,8 +19,8 @@ see [the firmware walkthrough](firmware/sonos-desk/README.md).
 From `firmware/sonos-desk/`, `just firmware-monitor` opens the USB monitor
 after the local tool setup.
 The `display-check` firmware draws a fixed e-ink test pattern.
-Live Sonos frames on the device and Home management
-are future work. Existing household applications remain outside this project.
+The `frame-check` image fetches and displays one monochrome Sonos frame over HTTP.
+Automatic display updates and Home management are future work. Existing household applications remain outside this project.
 
 ## Run from source
 

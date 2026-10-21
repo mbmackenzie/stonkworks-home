@@ -71,3 +71,84 @@ fn display_uses_vendor_sequence_and_stops_on_timeout() {
         assert!(!wire.packets.iter().any(|(command, _)| *command == 0x10));
     }
 }
+
+// Guard the decoder against large contiguous allocations on the C6.
+#[cfg(feature = "frame-check")]
+mod allocation {
+    use std::{
+        alloc::{GlobalAlloc, Layout, System},
+        cell::Cell,
+    };
+    thread_local! { static LARGEST: Cell<Option<usize>> = const { Cell::new(None) }; }
+    struct Observed;
+    #[global_allocator]
+    static ALLOCATOR: Observed = Observed;
+    fn record(size: usize) {
+        let _ = LARGEST.try_with(|value| {
+            if let Some(previous) = value.get() {
+                value.set(Some(previous.max(size)));
+            }
+        });
+    }
+    unsafe impl GlobalAlloc for Observed {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record(layout.size());
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            record(size);
+            unsafe { System.realloc(ptr, layout, size) }
+        }
+    }
+    pub fn measure<T>(run: impl FnOnce() -> T) -> (T, usize) {
+        LARGEST.set(Some(0));
+        let result = run();
+        (result, LARGEST.replace(None).unwrap())
+    }
+}
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn frame_decoder_accepts_only_complete_mono_frames() {
+    use sonos_desk_firmware::frame::decode_png;
+    let encode = |width, height, samples: &[u8]| {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, width, height);
+            encoder.set_color(png::ColorType::Grayscale);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(samples)
+                .unwrap();
+        }
+        bytes
+    };
+    let mut pixels = vec![255; 800 * 480];
+    pixels[0] = 0;
+    pixels[800 * 240 + 16] = 0;
+    pixels[800 * 480 - 1] = 0;
+    let bytes = encode(800, 480, &pixels);
+    let (frame, largest) = allocation::measure(|| decode_png(&bytes));
+    let frame = frame.unwrap();
+    assert!(
+        largest <= 64 * 1024,
+        "decoder requested {largest} contiguous bytes"
+    );
+    assert_eq!(frame[0], 0x7f);
+    assert_eq!(frame[240 * 100 + 2], 0x7f);
+    assert_eq!(frame[47_999], 0xfe);
+    assert_eq!(frame[100], 0xff);
+    assert!(decode_png(&bytes[..bytes.len() - 12]).is_err()); // Missing IEND.
+    let mut corrupt = bytes.clone();
+    corrupt[29] ^= 1; // IHDR CRC.
+    assert!(decode_png(&corrupt).is_err());
+    assert!(decode_png(&encode(8, 1, &[255; 8])).is_err());
+    pixels[1] = 85;
+    assert!(decode_png(&encode(800, 480, &pixels)).is_err()); // gray4 is not mono.
+    assert!(decode_png(&vec![0; 128 * 1024 + 1]).is_err());
+}

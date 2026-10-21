@@ -8,6 +8,7 @@ pub struct Config {
     pub mqtt: Mqtt,
     pub ntp_server: String,
     pub room_id: Option<String>,
+    pub http_base_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +57,15 @@ impl Config {
         if config.room_id.as_ref().is_some_and(|id| !identifier(id)) {
             return Err("Room ID requires 1–64 letters, digits, underscores or hyphens");
         }
+        if config
+            .http_base_url
+            .as_ref()
+            .is_some_and(|url| !http_base(url))
+        {
+            return Err(
+                "Frame service requires an http://hostname[:port] base URL without a path or credentials",
+            );
+        }
         if !identifier(&config.mqtt.client_id) || !identifier(&config.mqtt.instance) {
             return Err(
                 "Client ID and instance require 1–64 letters, digits, underscores or hyphens",
@@ -83,4 +93,20 @@ fn hostname(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
+fn http_base(value: &str) -> bool {
+    let Some(authority) = value.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = authority.strip_suffix('/').unwrap_or(authority);
+    let host = if let Some((host, port)) = authority.split_once(':') {
+        if !port.parse::<u16>().is_ok_and(|port| port != 0) {
+            return false;
+        }
+        host
+    } else {
+        authority
+    };
+    hostname(host)
 }

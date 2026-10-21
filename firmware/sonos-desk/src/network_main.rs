@@ -6,6 +6,8 @@ mod device;
 mod mqtt;
 #[cfg(target_os = "espidf")]
 mod network;
+#[cfg(target_os = "espidf")]
+mod wifi;
 
 #[cfg(target_os = "espidf")]
 fn main() -> anyhow::Result<()> {

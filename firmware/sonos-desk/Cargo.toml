@@ -9,6 +9,7 @@ input-check = []
 network-check = []
 controller = []
 display-check = ["dep:ssd1677", "dep:embedded-hal"]
+frame-check = ["display-check", "dep:png"]
 
 [dependencies]
 tamer = "=0.1.0"
@@ -19,6 +20,7 @@ uuid = { version = "1.28.0", features = ["serde"] }
 time = { version = "0.3.55", features = ["parsing"] }
 ssd1677 = { version = "=0.1.0", default-features = false, optional = true }
 embedded-hal = { version = "=1.0.0", optional = true }
+png = { version = "=0.4.2", optional = true, package = "oxiarc-png" }
 
 [[bin]]
 name = "input-check"
@@ -49,6 +51,13 @@ bench = false
 name = "display-check"
 path = "src/display_main.rs"
 required-features = ["display-check"]
+test = false
+bench = false
+
+[[bin]]
+name = "frame-check"
+path = "src/frame_main.rs"
+required-features = ["frame-check"]
 test = false
 bench = false
 

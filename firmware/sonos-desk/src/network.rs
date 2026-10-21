@@ -1,8 +1,7 @@
 use crate::mqtt::{Connection, MqttEvent};
-use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::sntp::{EspSntp, SntpConf, SyncStatus};
-use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use sonos_desk_firmware::{
     config::Config,
     controller::{Controller, ControllerConfig, Effect, Event, Time},
@@ -31,27 +30,7 @@ pub fn run(
     ca: &'static CStr,
     io: Option<ControlIo>,
 ) -> anyhow::Result<()> {
-    let event_loop = EspSystemEventLoop::take()?;
-    // None keeps Wi-Fi settings in RAM rather than storing another credential copy in NVS.
-    let mut wifi = BlockingWifi::wrap(EspWifi::new(modem, event_loop.clone(), None)?, event_loop)?;
-    wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-        ssid: config
-            .wifi
-            .ssid
-            .as_str()
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid SSID"))?,
-        password: config
-            .wifi
-            .password
-            .as_str()
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid Wi-Fi passphrase"))?,
-        // ESP-IDF treats this as a minimum security threshold, not a list of modes.
-        auth_method: AuthMethod::WPA2Personal,
-        ..Default::default()
-    }))?;
-    wifi.start()?;
+    let mut wifi = crate::wifi::start(modem, &config.wifi)?;
 
     let mut time_config = SntpConf::default();
     time_config.servers.fill("");

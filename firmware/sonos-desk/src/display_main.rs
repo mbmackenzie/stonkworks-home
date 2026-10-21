@@ -10,7 +10,9 @@ fn main() -> anyhow::Result<()> {
         .name("display-check".into())
         .stack_size(12 * 1024)
         .spawn(move || {
-            if let Err(error) = display::run(peripherals.spi2, peripherals.pins) {
+            if let Err(error) = display::run(peripherals.spi2, peripherals.pins, || {
+                Ok(sonos_desk_firmware::panel::pattern())
+            }) {
                 println!("Display setup failed: {error}");
             }
         })?

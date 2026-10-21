@@ -7,6 +7,16 @@ pub fn show_pattern<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
     delay: &mut D,
 ) -> Result<(), I::Error> {
+    show_frame(io, &mut pattern(), delay)
+}
+
+pub type Frame = Box<[u8; 48_000]>;
+
+pub fn show_frame<I: DisplayInterface, D: DelayNs>(
+    io: &mut I,
+    frame: &mut [u8; 48_000],
+    delay: &mut D,
+) -> Result<(), I::Error> {
     io.busy_wait(delay)?;
     io.send_command(0x12)?; // Software reset, after the board adapter's hardware reset.
     io.busy_wait(delay)?;
@@ -25,10 +35,9 @@ pub fn show_pattern<I: DisplayInterface, D: DelayNs>(
         io.send_data(data)?;
     }
     io.busy_wait(delay)?;
-    let mut frame = pattern(); // Heap allocation: 48 KB, never on the ESP main stack.
     // Calibrated to the user's mounting: 180° means reverse byte and bit order.
     frame.reverse();
-    for byte in &mut frame {
+    for byte in frame.iter_mut() {
         *byte = byte.reverse_bits();
     }
     for command in [0x24, 0x26] {
@@ -49,7 +58,7 @@ pub fn show_pattern<I: DisplayInterface, D: DelayNs>(
     Ok(())
 }
 
-fn pattern() -> Vec<u8> {
+pub fn pattern() -> Frame {
     let mut frame = vec![0xff; 48_000];
     for y in 0_usize..480 {
         for x in 0_usize..800 {
@@ -71,4 +80,7 @@ fn pattern() -> Vec<u8> {
         }
     }
     frame
+        .into_boxed_slice()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!())
 }

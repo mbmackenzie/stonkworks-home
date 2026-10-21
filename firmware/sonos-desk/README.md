@@ -5,7 +5,7 @@ decoder has an ESP32-C6 GPIO reader and a USB input-check binary. A separate
 network-check binary adds Wi-Fi, clock synchronization, and read-only MQTT 5
 over verified TLS. The controller binary sends Sonos commands from physical
 inputs. A separate display-check binary draws one fixed black/white pattern.
-Live Sonos frames on the display come later.
+A separate frame-check binary fetches and displays one monochrome Sonos frame.
 The input decoder uses the small [`tamer`](https://docs.rs/tamer/0.1.0/) crate
 for debounce and quadrature decoding. The device binary uses ESP-IDF through
 Rust bindings. We keep the mapping to our controls in this repository.
@@ -389,7 +389,7 @@ black/white HAT+ model's documentation; it does not electrically inspect the
 user's wiring or identify an unreported board revision.
 
 Successful USB output ends with `refresh finished; sleep command sent` and
-`power off; verify border, corner markers and right arrow`. A BUSY timeout
+`power off; image retained`. A BUSY timeout
 stops the sequence and powers off rather than retrying. PWR stays driven low
 while the program parks. A completed SPI sequence alone does not prove the
 screen displayed the image; visual confirmation is required.
@@ -408,3 +408,43 @@ refresh with MQTT controls are not implemented in this chunk.
 
 To restore physical Sonos controls, close the monitor, then run
 `just firmware-flash controller`. That image keeps the display powered off.
+
+
+## One Sonos frame over HTTP
+
+Set top-level `http_base_url` and `room_id` in the ignored `config.local.toml`,
+using `config.example.toml` as the template. The HTTP address must be a plain
+`http://host[:port]` origin on the trusted LAN, with no path or credentials.
+This chunk uses the existing unauthenticated HTTP frame endpoint; MQTT retains
+its separate verified TLS configuration.
+
+```sh
+just firmware-build frame-check
+just firmware-flash frame-check
+just firmware-monitor
+```
+
+This replaces the controller temporarily. On each boot it connects Wi-Fi,
+fetches `/frame?room=<configured-id>&mode=mono`, disconnects Wi-Fi, decodes the
+PNG, draws once in the confirmed orientation, and sleeps the panel. The power
+pin stays low until the frame has been downloaded and validated. Errors stop
+without refreshing or retrying. Buttons do not control Sonos in this image.
+
+The download accepts a 200 `image/png` response, has a 128 KiB size cap,
+five-second socket timeout and twenty-second body deadline, and follows no
+redirects. Only complete, non-interlaced 800 × 480 grayscale PNGs with eight-bit
+black/white pixels are accepted. `oxiarc-png` supplies PNG/DEFLATE decoding;
+our small adapter packs rows into the panel's 48,000-byte buffer. A dedicated
+24 KiB worker handles this image. No custom image codec is implemented.
+
+The original PNG decoder passed host tests but requested a 205,312-byte buffer
+on the C6 and exhausted its heap. The replacement uses bounded row buffers.
+One focused decoder test checks packing, malformed input, format rejection,
+and a 64 KiB maximum individual allocation for its fixture. All nine host
+tests pass; that allocation guard does not measure total device memory use.
+Automatic refresh, ETags, grayscale and simultaneous MQTT/display operation
+remain separate work.
+
+Hardware run (2026-10-21): the C6 fetched a 9,640-byte real Sonos frame,
+disconnected Wi-Fi, validated the PNG, and reported completed refresh, panel
+sleep, and power-off without timeout or allocation failure. The user confirmed the Sonos artwork and text are upright and complete. The frame-check image remains on the board.

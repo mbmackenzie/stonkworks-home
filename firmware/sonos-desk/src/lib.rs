@@ -6,3 +6,6 @@ pub mod protocol;
 
 #[cfg(feature = "display-check")]
 pub mod panel;
+
+#[cfg(feature = "frame-check")]
+pub mod frame;

@@ -2,6 +2,7 @@
 # Prefer a local NTP server if normal operation must work without Internet.
 ntp_server = "time.example.test"
 room_id = "RINCON_00000000000101400"
+http_base_url = "http://sonos-desk.example.test:8008"
 
 [wifi]
 ssid = "YOUR_WIFI_NAME"

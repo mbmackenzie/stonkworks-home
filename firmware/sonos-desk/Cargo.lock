@@ -995,6 +995,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "oxiarc-core"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7105e98c1e12eb2d8a4e003419455b13747f5b31d02740f451f5413491d1cf84"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "oxiarc-deflate"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e1fff603e1bd7c3afd1b480fc4343dd27be81cf23c8ef04e408a4494dc8ff22"
+dependencies = [
+ "oxiarc-core",
+]
+
+[[package]]
+name = "oxiarc-png"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1b05b5922057d21464c59d65bb820305fe5c41c8fe3587698754c6717ceb27e"
+dependencies = [
+ "oxiarc-core",
+ "oxiarc-deflate",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1227,6 +1256,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embuild",
  "esp-idf-svc",
+ "oxiarc-png",
  "serde",
  "serde_json",
  "ssd1677",

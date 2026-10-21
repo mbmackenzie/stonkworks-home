@@ -15,6 +15,15 @@ fn configuration_validates_settings_without_exposing_secrets() {
         example.replace("desk-controller-01", "desk/#"),
         example.replace("mqtt.example.test", "mqtt://broker"),
         example.replace("RINCON_00000000000101400", "room/#"),
+        example.replace(
+            "http://sonos-desk.example.test:8008",
+            "http://user:password@host",
+        ),
+        example.replace(
+            "http://sonos-desk.example.test:8008",
+            "http://host/path?room=bad",
+        ),
+        example.replace("http://sonos-desk.example.test:8008", "https://host:8008"),
         example.replace("CHANGE_ME", "do-not-log-this\n[invalid"),
     ] {
         let error = Config::parse(&invalid)

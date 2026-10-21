@@ -9,10 +9,15 @@ use ssd1677::Interface;
 use std::thread;
 use std::time::Duration;
 
-pub fn run(spi: SPI2<'static>, pins: Pins) -> anyhow::Result<()> {
+pub fn run(
+    spi: SPI2<'static>,
+    pins: Pins,
+    load: impl FnOnce() -> anyhow::Result<panel::Frame>,
+) -> anyhow::Result<()> {
     let mut power = PinDriver::output(pins.gpio4)?;
     power.set_low()?;
     let result = (|| -> anyhow::Result<()> {
+        let mut frame = load()?; // Fetch/decode with panel power held off.
         let mut reset = PinDriver::output(pins.gpio22)?;
         reset.set_low()?;
         let mut dc = PinDriver::output(pins.gpio20)?;
@@ -39,15 +44,15 @@ pub fn run(spi: SPI2<'static>, pins: Pins) -> anyhow::Result<()> {
         thread::sleep(Duration::from_millis(20));
         let mut io = Interface::new(spi, dc, reset, busy);
         io.set_busy_timeout(15_000);
-        println!("Display: drawing one pattern; BUSY timeout 15 seconds per wait");
-        panel::show_pattern(&mut io, &mut FreeRtos)
+        println!("Display: drawing one frame; BUSY timeout 15 seconds per wait");
+        panel::show_frame(&mut io, &mut frame, &mut FreeRtos)
             .map_err(|error| anyhow::anyhow!("{error:?}"))?;
         println!("Display: refresh finished; sleep command sent");
         Ok(())
     })();
     power.set_low()?;
     match result {
-        Ok(()) => println!("Display: power off; verify border, corner markers and right arrow"),
+        Ok(()) => println!("Display: power off; image retained"),
         Err(error) => println!("Display: stopped: {error}; power off; check wiring before reset"),
     }
     // Hold PWR low. No network, Sonos commands, or automatic refresh/retry loop.
