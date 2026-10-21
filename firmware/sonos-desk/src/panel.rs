@@ -79,9 +79,61 @@ pub fn show_frame<I: DisplayInterface, D: DelayNs>(
     Ok(())
 }
 
+fn set_window<I: DisplayInterface>(io: &mut I, region: Region) -> Result<(), I::Error> {
+    // RAM x is mirrored (800 - x) and RAM y equals frame y.
+    let (xs, xe) = ((800 - region.x1) / 8, (800 - region.x0) / 8);
+    let (xs_px, xe_px) = (xs * 8, (xe - 1) * 8);
+    let (y0, y1) = (region.y0, region.y1 - 1);
+    for (command, data) in [
+        (0x11, &[0x03][..]), // X and Y increment, as after the vendor's reset.
+        (
+            0x44,
+            &[
+                xs_px as u8,
+                (xs_px >> 8) as u8,
+                xe_px as u8,
+                (xe_px >> 8) as u8,
+            ],
+        ),
+        (
+            0x45,
+            &[y0 as u8, (y0 >> 8) as u8, y1 as u8, (y1 >> 8) as u8],
+        ),
+        (0x4e, &[xs_px as u8, (xs_px >> 8) as u8]),
+        (0x4f, &[y0 as u8, (y0 >> 8) as u8]),
+    ] {
+        io.send_command(command)?;
+        io.send_data(data)?;
+    }
+    Ok(())
+}
+
+/// Send `region` of `frame` to one RAM plane, window already set.
+fn write_window<I: DisplayInterface>(
+    io: &mut I,
+    command: u8,
+    frame: &[u8; 48_000],
+    region: Region,
+) -> Result<(), I::Error> {
+    let (xs, xe) = (
+        usize::from((800 - region.x1) / 8),
+        usize::from((800 - region.x0) / 8),
+    );
+    io.send_command(command)?;
+    for y in region.y0..region.y1 {
+        // Stream row 479 - y holds frame row y; send only the window's bytes.
+        io.send_data(&ram_row(frame, 479 - usize::from(y))[xs..xe])?;
+    }
+    Ok(())
+}
+
 /// Partial refresh of `region` using Waveshare's `EPD_3in97_Display_Partial` sequence.
-/// Both planes get their window, so the controller drives only changed pixels. The
-/// board adapter must hardware-reset the panel first; the panel stays awake after.
+/// The board adapter must hardware-reset the panel first; the panel stays awake after.
+///
+/// This controller swaps its two RAM planes after every refresh. Writing only the
+/// changed window leaves everything outside it with "old" in the plane that now counts
+/// as new, so the next partial would draw the previous window back (hardware experiment,
+/// 2026-10-21). Writing the new window into both planes afterwards keeps them equal.
 pub fn show_partial<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
     old: &[u8; 48_000],
@@ -89,56 +141,25 @@ pub fn show_partial<I: DisplayInterface, D: DelayNs>(
     region: Region,
     delay: &mut D,
 ) -> Result<(), I::Error> {
-    // RAM x is mirrored (800 - x) and RAM y equals frame y.
-    let (xs, xe) = ((800 - region.x1) / 8, (800 - region.x0) / 8);
-    let (xs_px, xe_px) = (xs * 8, (xe - 1) * 8);
-    let (y0, y1) = (region.y0, region.y1 - 1);
-    let window = |io: &mut I| -> Result<(), I::Error> {
-        for (command, data) in [
-            (0x11, &[0x03][..]), // X and Y increment, as after the vendor's reset.
-            (
-                0x44,
-                &[
-                    xs_px as u8,
-                    (xs_px >> 8) as u8,
-                    xe_px as u8,
-                    (xe_px >> 8) as u8,
-                ],
-            ),
-            (
-                0x45,
-                &[y0 as u8, (y0 >> 8) as u8, y1 as u8, (y1 >> 8) as u8],
-            ),
-            (0x4e, &[xs_px as u8, (xs_px >> 8) as u8]),
-            (0x4f, &[y0 as u8, (y0 >> 8) as u8]),
-        ] {
-            io.send_command(command)?;
-            io.send_data(data)?;
-        }
-        Ok(())
-    };
-    let plane = |io: &mut I, command: u8, frame: &[u8; 48_000]| -> Result<(), I::Error> {
-        io.send_command(command)?;
-        for y in region.y0..region.y1 {
-            // Stream row 479 - y holds frame row y; send only the window's bytes.
-            io.send_data(&ram_row(frame, 479 - usize::from(y))[usize::from(xs)..usize::from(xe)])?;
-        }
-        Ok(())
-    };
     io.busy_wait(delay)?;
     for (command, data) in [(0x18, 0x80), (0x3c, 0x80)] {
         io.send_command(command)?;
         io.send_data(&[data])?;
     }
-    window(io)?;
-    plane(io, 0x26, old)?;
-    window(io)?; // Writing moved the address counters.
-    plane(io, 0x24, new)?;
+    for (command, frame) in [(0x26, old), (0x24, new)] {
+        set_window(io, region)?; // Each write moves the address counters.
+        write_window(io, command, frame, region)?;
+    }
     io.send_command(0x22)?;
     io.send_data(&[0xff])?; // Vendor partial mode.
     io.send_command(0x20)?;
     delay.delay_ms(10);
-    io.busy_wait(delay)
+    io.busy_wait(delay)?;
+    for command in [0x26, 0x24] {
+        set_window(io, region)?;
+        write_window(io, command, new, region)?;
+    }
+    Ok(())
 }
 
 pub fn pattern() -> Frame {

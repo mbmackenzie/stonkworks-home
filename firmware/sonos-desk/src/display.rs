@@ -115,9 +115,9 @@ impl Panel {
     }
 
     /// Partially refresh `region`; `old` is the frame the panel shows, `new` replaces it.
-    /// PWR stays high afterwards so later partials skip power-up; a full `draw` or any
-    /// failure powers off. After a power-off both planes are reloaded with `old` first,
-    /// because RAM retention without power is unverified.
+    /// PWR stays high after every successful draw: the panel sleeps with its RAM retained
+    /// (deep sleep mode 1), the one configuration the hardware spike verified clean. Any
+    /// failure powers off, and the worker then stops drawing until reset.
     #[allow(dead_code)] // The one-shot diagnostics share this file but only draw in full.
     pub fn draw_partial(
         &mut self,
@@ -125,24 +125,19 @@ impl Panel {
         new: &[u8; 48_000],
         region: panel::Region,
     ) -> anyhow::Result<()> {
+        let started = std::time::Instant::now();
         let result = (|| -> anyhow::Result<()> {
-            let reload = !self.powered;
             self.power_up()?;
             self.reset_pulse()?;
-            if reload {
-                let mut io =
-                    Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
-                io.set_busy_timeout(15_000);
-                panel::load_planes(&mut io, old, &mut FreeRtos)
-                    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-                self.reset_pulse()?;
-            }
             let mut io =
                 Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
             io.set_busy_timeout(15_000);
             panel::show_partial(&mut io, old, new, region, &mut FreeRtos)
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-            println!("Display: partial refresh finished");
+            println!(
+                "Display: partial refresh finished in {} ms",
+                started.elapsed().as_millis()
+            );
             Ok(())
         })();
         if result.is_err() {
@@ -164,9 +159,10 @@ impl Panel {
             println!("Display: refresh finished; sleep command sent");
             Ok(())
         })();
-        self.power_down()?;
-        if result.is_ok() {
-            println!("Display: power off; image retained");
+        if result.is_err() {
+            self.power_down()?;
+        } else {
+            println!("Display: image retained; PWR stays high, panel asleep");
         }
         result
     }

@@ -88,6 +88,10 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                             }
                             schedule.full_shown(etag, now());
                         } else if let Some(region) = changed_region(&shown, &next) {
+                            println!(
+                                "Display: partial x {}..{} y {}..{} etag {:?}",
+                                region.x0, region.x1, region.y0, region.y1, etag
+                            );
                             if let Err(error) = panel.draw_partial(&shown, &next, region) {
                                 disable(error);
                             }

@@ -228,8 +228,17 @@ fn partial_window_matches_full_ram_image() {
     };
     assert_eq!(data(0x26), window(&old_ram));
     assert_eq!(data(0x24), window(&new_ram));
-    assert_eq!(wire.packets.last().map(|p| p.0), Some(0x20));
-    assert_eq!(wire.packets[wire.packets.len() - 2].1, [0xff]); // Vendor partial mode.
+    let trigger = wire.packets.iter().position(|p| p.0 == 0x20).unwrap();
+    assert_eq!(wire.packets[trigger - 1].1, [0xff]); // Vendor partial mode.
+    // The controller swaps its RAM planes after a refresh, so both must then hold the
+    // new window or the next partial would draw the old one back.
+    for command in [0x26, 0x24] {
+        let synced = wire.packets[trigger..]
+            .iter()
+            .find(|p| p.0 == command)
+            .unwrap();
+        assert_eq!(synced.1, window(&new_ram));
+    }
     assert!(!wire.packets.iter().any(|p| p.0 == 0x10)); // Panel stays awake.
 
     // One pixel byte at (16..24, 3): RAM x byte 97, so pixel 776 = 0x308.

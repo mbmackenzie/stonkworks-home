@@ -477,8 +477,15 @@ compares each fetched frame with the cached one (`changed_region`) and partially
 refreshes only the byte-aligned box that changed, using Waveshare's partial
 sequence on both RAM planes (`show_partial`). Identical frames and HTTP 304
 responses cost no panel traffic. The cached frame is replaced only after the panel
-call succeeds. A partial takes about 0.5 to 0.85 seconds on this panel (see the
-spike findings in the design spec). PWR stays high between partials.
+call succeeds. A partial takes about 0.5 to 0.9 seconds on this panel (see the
+spike findings in the design spec). PWR stays high after every draw; the panel
+sleeps with its RAM retained.
+
+This controller **swaps its two RAM planes after every refresh**. A partial that
+wrote only its changed window would leave the rest of the screen holding "old" in
+the plane that now counts as new, and the next partial would draw the previous one
+back (found on hardware, 2026-10-21: each partial reverted its predecessor's box).
+`show_partial` therefore writes the new window into both planes after each refresh.
 
 **Ghosting cleanup.** Full, flashing refreshes never happen while you are using the
 controls. After 60 seconds without input or visible changes, if any partials were
@@ -487,8 +494,7 @@ drawn since the last full refresh, the worker redraws the cached frame in full. 
 do not postpone it, and it waits for the same idle window. **Hold Mute for two
 seconds** to force a full refresh immediately. Because of this gesture, Mute now
 toggles on release (a hold under two seconds), not on press; the other buttons are
-unchanged. After a full refresh powers the panel off, the first partial reloads both
-RAM planes (about one extra second), since RAM retention without power is unverified.
+unchanged.
 
 `If-None-Match` carries the ETag of the last frame shown. Fetch/decode failures retain
 that ETag and the old image. Panel/SPI failure disables display updates until reset,
