@@ -11,3 +11,6 @@ __pycache__/
 
 # Rust firmware build artifacts
 target/
+firmware/sonos-desk/.embuild/
+firmware/sonos-desk/sdkconfig
+firmware/sonos-desk/sdkconfig.old

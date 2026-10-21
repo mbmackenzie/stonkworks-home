@@ -1,3 +1,6 @@
+use tamer::debounce::{Edge, EdgeDetector};
+use tamer::rotary::{EncoderDirection, QuadratureDecoder};
+
 /// Physical inputs, normalized so a pressed button is `true`.
 #[derive(Clone, Copy, Default)]
 pub struct Levels {
@@ -20,56 +23,24 @@ pub enum InputEvent {
 
 const DEBOUNCE_MS: u64 = 20;
 
-struct Button {
-    raw: bool,
-    stable: bool,
-    changed_at: u64,
-    armed: bool,
-}
-
-impl Button {
-    fn new(pressed: bool, now_ms: u64) -> Self {
-        Self {
-            raw: pressed,
-            stable: pressed,
-            changed_at: now_ms,
-            armed: !pressed,
-        }
-    }
-
-    fn sample(&mut self, pressed: bool, now_ms: u64) -> bool {
-        if pressed != self.raw {
-            self.raw = pressed;
-            self.changed_at = now_ms;
-        }
-        if self.raw == self.stable || now_ms.saturating_sub(self.changed_at) < DEBOUNCE_MS {
-            return false;
-        }
-        self.stable = self.raw;
-        if !self.stable {
-            self.armed = true;
-            return false;
-        }
-        let fire = self.armed;
-        self.armed = false;
-        fire
-    }
-}
-
 pub struct Inputs {
-    buttons: [Button; 4],
-    encoder_previous: u8,
-    encoder_rest: u8,
-    encoder_steps: i8,
+    buttons: [EdgeDetector; 4],
+    encoder: QuadratureDecoder,
+    encoder_previous: (bool, bool),
+    encoder_rest: (bool, bool),
+    syncing: bool,
 }
 
 impl Inputs {
-    pub fn new(levels: Levels, now_ms: u64) -> Self {
+    pub fn new(levels: Levels) -> Self {
         Self {
-            buttons: levels.buttons().map(|pressed| Button::new(pressed, now_ms)),
-            encoder_previous: levels.encoder(),
-            encoder_rest: levels.encoder(),
-            encoder_steps: 0,
+            buttons: levels
+                .buttons()
+                .map(|pressed| EdgeDetector::new(pressed, DEBOUNCE_MS)),
+            encoder: QuadratureDecoder::new(levels.a, levels.b, 4),
+            encoder_previous: (levels.a, levels.b),
+            encoder_rest: (levels.a, levels.b),
+            syncing: false,
         }
     }
 
@@ -84,49 +55,45 @@ impl Inputs {
         for ((button, pressed), action) in
             self.buttons.iter_mut().zip(levels.buttons()).zip(actions)
         {
-            if button.sample(pressed, now_ms) {
+            if button.update(pressed, now_ms) == Some(Edge::Rising) {
                 events.push(action);
             }
         }
 
-        let current = levels.encoder();
-        if current != self.encoder_previous {
-            // Only one contact changes at a time in a valid quadrature sequence.
-            let step = match (self.encoder_previous, current) {
-                (0, 1) | (1, 3) | (3, 2) | (2, 0) => 1,
-                (1, 0) | (3, 1) | (2, 3) | (0, 2) => -1,
-                _ => 0,
-            };
-            if step == 0 {
-                self.encoder_steps = 0;
-            } else {
-                self.encoder_steps += step;
+        let current = (levels.a, levels.b);
+        if self.syncing {
+            // After reconnect, finish any partial turn without producing an action.
+            self.syncing = current != self.encoder_rest;
+        } else {
+            if current.0 != self.encoder_previous.0 && current.1 != self.encoder_previous.1 {
+                self.encoder.reset(); // A two-contact jump breaks the partial cycle.
             }
-            self.encoder_previous = current;
-            if current == self.encoder_rest {
-                if self.encoder_steps.abs() == 4 {
-                    events.push(InputEvent::Volume(self.encoder_steps.signum()));
-                }
-                self.encoder_steps = 0;
+            if let Some(direction) = self.encoder.update(levels.a, levels.b) {
+                // Direction calibrated to the wired KY-040.
+                let step = match direction {
+                    EncoderDirection::Clockwise => 1,
+                    EncoderDirection::CounterClockwise => -1,
+                };
+                events.push(InputEvent::Volume(step));
             }
         }
+        self.encoder_previous = current;
         events
     }
 
     /// Drop held presses and partial motion when connectivity changes.
-    pub fn disarm(&mut self, levels: Levels, now_ms: u64) {
-        self.buttons = levels.buttons().map(|pressed| Button::new(pressed, now_ms));
-        self.encoder_previous = levels.encoder();
-        self.encoder_steps = 0;
+    pub fn disarm(&mut self, levels: Levels) {
+        self.buttons = levels
+            .buttons()
+            .map(|pressed| EdgeDetector::new(pressed, DEBOUNCE_MS));
+        self.encoder = QuadratureDecoder::new(self.encoder_rest.0, self.encoder_rest.1, 4);
+        self.encoder_previous = (levels.a, levels.b);
+        self.syncing = self.encoder_previous != self.encoder_rest;
     }
 }
 
 impl Levels {
     fn buttons(self) -> [bool; 4] {
         [self.previous, self.play_pause, self.next, self.mute]
-    }
-
-    fn encoder(self) -> u8 {
-        (u8::from(self.a) << 1) | u8::from(self.b)
     }
 }

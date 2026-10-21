@@ -46,12 +46,15 @@ Modify root `.gitignore` and `README.md` to ignore generated/secrets files and l
 
 ## Task 1: Input decoding and USB bring-up
 
-Progress: the user requested small learning chunks during execution. Chunk 1
-implements portable input decoding with two passing host tests and a README
-walkthrough. GPIO/USB bring-up and target builds remain the next chunk; Task 1
-as a whole is not yet complete. Pause between learning chunks as requested.
+Progress: input-check now builds and runs on the ESP32-C6 over native USB.
+The user requested minimal custom code, so tamer supplies debounce and rotary
+decoding. Two host tests remain. All four switch events and rotation in both
+directions were observed; the user confirmed the direction correction works.
+The display stayed disconnected; its exact power circuit is deferred to display
+bring-up. Hold/reset acceptance remains manual.
+Continue in learning chunks; networking has not started.
 
-**Interfaces:** `Inputs::new(levels: Levels, now_ms: u64) -> Inputs`; `Inputs::sample(&mut self, levels: Levels, now_ms: u64) -> Vec<InputEvent>`; `Inputs::disarm(&mut self, levels: Levels, now_ms: u64)`. `Levels` holds previous/play/next/encoder-switch pressed flags and A/B levels; `InputEvent` is `Previous`, `PlayPause`, `Next`, `Mute`, or `Volume(i8)`. Emit at most five events per sample, preserving simultaneous presses.
+**Interfaces:** `Inputs::new(levels: Levels) -> Inputs`; `Inputs::sample(&mut self, levels: Levels, now_ms: u64) -> Vec<InputEvent>`; `Inputs::disarm(&mut self, levels: Levels)`. `Levels` holds previous/play/next/encoder-switch pressed flags and A/B levels; `InputEvent` is `Previous`, `PlayPause`, `Next`, `Mute`, or `Volume(i8)`. Emit at most five events per sample, preserving simultaneous presses.
 
 - [ ] Write two small table-driven tests: `buttons_require_stable_press_and_release` and `encoder_counts_complete_detents`. Assert bounce produces no extra press, 20 ms stable press produces one event, holds never repeat, initial held buttons require release, invalid quadrature jumps produce no step, and a complete calibrated detent produces exactly +1 or -1. Disarming resets partial motion and held-button eligibility.
 - [ ] Run `cargo test --manifest-path firmware/sonos-desk/Cargo.toml`; establish the tests fail on missing behavior, then implement only enough portable input logic to pass. Keep startup configuration independent of these tests.

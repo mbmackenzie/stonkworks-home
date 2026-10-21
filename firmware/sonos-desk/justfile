@@ -1,0 +1,3 @@
+# Watch button and encoder events over USB. Does not flash firmware.
+firmware-monitor:
+    target/tools/bin/espflash monitor --skip-update-check
