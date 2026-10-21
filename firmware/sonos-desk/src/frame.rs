@@ -1,9 +1,6 @@
 //! Decode the existing mono HTTP contract into one packed panel buffer.
 use crate::panel::Frame;
-use std::{
-    io::{BufReader, Cursor},
-    sync::atomic::{AtomicU32, Ordering},
-};
+use std::io::{BufReader, Cursor};
 
 pub const MAX_PNG_BYTES: usize = 128 * 1024;
 
@@ -72,6 +69,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
         .map_err(|_| "Invalid framebuffer size")
 }
 
+pub use crate::link::{DisplayLink, Signals};
 pub use crate::panel::Region;
 
 /// Smallest byte-aligned box covering every differing byte, or `None` if identical.
@@ -96,46 +94,6 @@ pub fn changed_region(old: &[u8; 48_000], new: &[u8; 48_000]) -> Option<Region> 
         y0,
         y1: y1 + 1,
     })
-}
-
-/// Counters bumped from other threads; the C6 has only 32-bit atomics.
-#[derive(Default)]
-pub struct DisplayLink {
-    changed: AtomicU32,
-    activity: AtomicU32,
-    force: AtomicU32,
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct Signals {
-    pub changed: u32,
-    pub activity: u32,
-    pub force: u32,
-}
-
-impl DisplayLink {
-    /// Visible Sonos state changed (MQTT state or a completed command result).
-    pub fn bump_changed(&self) {
-        self.changed.fetch_add(1, Ordering::Release);
-    }
-
-    /// A physical input happened; full refreshes wait for quiet.
-    pub fn bump_activity(&self) {
-        self.activity.fetch_add(1, Ordering::Release);
-    }
-
-    /// The user asked for a full refresh now.
-    pub fn bump_force(&self) {
-        self.force.fetch_add(1, Ordering::Release);
-    }
-
-    pub fn snapshot(&self) -> Signals {
-        Signals {
-            changed: self.changed.load(Ordering::Acquire),
-            activity: self.activity.load(Ordering::Acquire),
-            force: self.force.load(Ordering::Acquire),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

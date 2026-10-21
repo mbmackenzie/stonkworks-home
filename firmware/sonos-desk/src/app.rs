@@ -1,5 +1,5 @@
 use crate::{device, network};
-use sonos_desk_firmware::config::Config;
+use sonos_desk_firmware::{config::Config, link::DisplayLink};
 use std::ffi::CStr;
 use std::sync::{Arc, atomic::AtomicU32, mpsc};
 use std::time::Instant;
@@ -21,7 +21,9 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
         gate: gate.clone(),
         sender,
     });
+    let link = Arc::new(DisplayLink::default());
     let network_gate = gate.clone();
+    let network_link = link.clone();
     std::thread::Builder::new()
         .name("network".into())
         .stack_size(16 * 1024)
@@ -34,6 +36,7 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
                     }
                     let io = controls.then_some(network::ControlIo {
                         gate: network_gate,
+                        link: network_link,
                         receiver,
                         start,
                     });

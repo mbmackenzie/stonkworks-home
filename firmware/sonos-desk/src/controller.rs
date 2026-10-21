@@ -1,5 +1,5 @@
 use crate::inputs::InputEvent;
-use crate::protocol::{Command, Observation, ResultStatus, Status, Value};
+use crate::protocol::{Command, Observation, ResultStatus, RoomState, Status, Value};
 use uuid::Uuid;
 
 pub struct ControllerConfig {
@@ -23,6 +23,8 @@ pub enum Event {
 pub enum Effect {
     Publish(Command),
     Ready(bool),
+    /// Something the screen shows may have changed; fetch a frame.
+    DisplayChanged,
     Log(&'static str),
 }
 
@@ -63,6 +65,22 @@ struct Pending {
     id: Uuid,
     deadline_ms: u64,
 }
+#[derive(PartialEq)]
+struct DisplayKey(String, String, String, String, String, u8, bool);
+impl DisplayKey {
+    fn new(state: &RoomState) -> Self {
+        Self(
+            state.title.clone(),
+            state.artist.clone(),
+            state.album.clone(),
+            state.artwork_url.clone(),
+            state.playback_state.clone(),
+            state.volume,
+            state.mute,
+        )
+    }
+}
+
 struct MuteGuard {
     id: Uuid,
     observed: i64,
@@ -79,6 +97,7 @@ pub struct Controller {
     pending: [Option<Pending>; 4],
     volume: Option<(u64, i16)>,
     mute: Option<MuteGuard>,
+    display: Option<DisplayKey>,
 }
 
 impl Controller {
@@ -94,6 +113,7 @@ impl Controller {
             pending: [const { None }; 4],
             volume: None,
             mute: None,
+            display: None,
         }
     }
 
@@ -111,6 +131,7 @@ impl Controller {
                 self.inventory = None;
                 self.room = None;
                 self.state = None;
+                self.display = None;
             }
             Event::Subscribed => self.subscribed = true,
             _ => {}
@@ -255,6 +276,7 @@ impl Controller {
                     self.inventory = None;
                     self.room = None;
                     self.state = None;
+                    self.display = None;
                     self.volume = None;
                     self.pending.fill_with(|| None);
                     self.mute = None;
@@ -285,7 +307,15 @@ impl Controller {
             Observation::State(snapshot) => {
                 if let Some(stamp) = Stamp::new(snapshot.service_session, snapshot.observed_at, now)
                 {
-                    self.confirm(stamp, snapshot.data.state.mute, now);
+                    let accepted = self.confirm(stamp, snapshot.data.state.mute, now);
+                    let key = DisplayKey::new(&snapshot.data.state);
+                    if accepted
+                        && self.session == Some(snapshot.service_session)
+                        && self.display.as_ref() != Some(&key)
+                    {
+                        self.display = Some(key);
+                        effects.push(Effect::DisplayChanged);
+                    }
                 }
             }
             Observation::Result(result) => {
@@ -314,6 +344,7 @@ impl Controller {
                             replace(&mut self.state, stamp, state.mute);
                         }
                         effects.push(Effect::Log("Command: completed"));
+                        effects.push(Effect::DisplayChanged);
                     }
                     ResultStatus::Rejected => {
                         effects.push(Effect::Log("Command: rejected; no retry"))
@@ -334,8 +365,9 @@ impl Controller {
         }
     }
 
-    fn confirm(&mut self, stamp: Stamp, mute: bool, now: Time) {
-        if replace(&mut self.state, stamp, mute)
+    fn confirm(&mut self, stamp: Stamp, mute: bool, now: Time) -> bool {
+        let accepted = replace(&mut self.state, stamp, mute);
+        if accepted
             && self.session.is_some_and(|s| stamp.fresh(s, now))
             && self
                 .mute
@@ -344,6 +376,7 @@ impl Controller {
         {
             self.mute = None;
         }
+        accepted
     }
 }
 

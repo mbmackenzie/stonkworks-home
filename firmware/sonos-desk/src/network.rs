@@ -6,6 +6,7 @@ use sonos_desk_firmware::{
     config::Config,
     controller::{Controller, ControllerConfig, Effect, Event, Time},
     inputs::InputEvent,
+    link::DisplayLink,
     protocol::Observation,
 };
 use std::ffi::CStr;
@@ -20,6 +21,7 @@ use uuid::Uuid;
 
 pub struct ControlIo {
     pub gate: Arc<AtomicU32>,
+    pub link: Arc<DisplayLink>,
     pub receiver: Receiver<(u32, u64, InputEvent)>,
     pub start: Instant,
 }
@@ -95,6 +97,7 @@ fn mqtt_session(
 ) -> anyhow::Result<()> {
     let base = format!("stonkworks/v1/sonos-desk/{}/", config.mqtt.instance);
     let gate = io.map_or_else(|| Arc::new(AtomicU32::new(0)), |io| io.gate.clone());
+    let link = io.map(|io| io.link.clone());
     let mut controller = io.map(|_| {
         Controller::new(ControllerConfig {
             instance: config.mqtt.instance.clone(),
@@ -157,6 +160,7 @@ fn mqtt_session(
                                     &mut connection,
                                     &gate,
                                     generation,
+                                    link.as_deref(),
                                 )?;
                             }
                         }
@@ -176,6 +180,7 @@ fn mqtt_session(
                                 &mut connection,
                                 &gate,
                                 generation,
+                                link.as_deref(),
                             )?;
                         } else {
                             println!(
@@ -193,6 +198,7 @@ fn mqtt_session(
                     &mut connection,
                     &gate,
                     generation,
+                    link.as_deref(),
                 )?;
                 if let Some(io) = io {
                     while let Ok((input_generation, input_ms, input)) = io.receiver.try_recv() {
@@ -208,6 +214,7 @@ fn mqtt_session(
                                 &mut connection,
                                 &gate,
                                 generation,
+                                link.as_deref(),
                             )?;
                         }
                     }
@@ -235,6 +242,7 @@ fn apply(
     connection: &mut Connection,
     gate: &AtomicU32,
     generation: &mut u32,
+    link: Option<&DisplayLink>,
 ) -> anyhow::Result<()> {
     for effect in controller.handle(event, now, &mut random_id) {
         match effect {
@@ -259,6 +267,11 @@ fn apply(
                     );
                     println!("Command: outcome uncertain; connection discarded, no retry");
                     anyhow::bail!("Publish failed");
+                }
+            }
+            Effect::DisplayChanged => {
+                if let Some(link) = link {
+                    link.bump_changed();
                 }
             }
             Effect::Log(message) => println!("{message}"),

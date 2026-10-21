@@ -387,3 +387,66 @@ fn uncertain_actions_are_never_replayed() {
         assert_ne!(next.request_id, original.request_id);
     }
 }
+
+fn woke(effects: Vec<Effect>) -> usize {
+    effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::DisplayChanged))
+        .count()
+}
+
+fn state(
+    c: &mut Controller,
+    ms: u64,
+    stamp: &str,
+    session: &str,
+    title: &str,
+    volume: u8,
+) -> usize {
+    woke(message(
+        c,
+        "rooms/room-1/state",
+        serde_json::json!({"service_session":session,"observed_at":stamp,"state":{"room_id":"room-1","room":"Study","coordinator":"Study","coordinator_id":"room-1","title":title,"artist":"","album":"","artwork_url":"","playback_state":"PAUSED_PLAYBACK","duration":"0:00:00","volume":volume,"mute":false}}),
+        ms,
+    ))
+}
+
+#[test]
+fn display_wakes_only_on_visible_changes() {
+    let mut c = ready(); // First accepted state: volume 20, empty title.
+    assert_eq!(
+        state(&mut c, 5000, "2026-10-17T00:00:05Z", SESSION, "", 20),
+        0
+    ); // Newer, identical.
+    assert_eq!(
+        state(&mut c, 6000, "2026-10-17T00:00:06Z", SESSION, "", 30),
+        1
+    ); // Volume.
+    assert_eq!(
+        state(&mut c, 7000, "2026-10-17T00:00:07Z", SESSION, "Song", 30),
+        1
+    ); // Title only.
+    assert_eq!(
+        state(&mut c, 8000, "2026-10-17T00:00:08Z", SESSION, "Song", 30),
+        0
+    ); // Repeat.
+    assert_eq!(
+        state(&mut c, 8100, "2026-10-17T00:00:03Z", SESSION, "Old", 50),
+        0
+    ); // Stale.
+    let command = sent(step(&mut c, Event::Input(InputEvent::PlayPause), 9100))
+        .pop()
+        .unwrap();
+    let effects = message(
+        &mut c,
+        "clients/desk/results",
+        serde_json::json!({"service_session":SESSION,"client_id":"desk","request_id":command.request_id,"room_id":"room-1","completed_at":"2026-10-17T00:00:09Z","status":"completed","detail":"","state":{"room_id":"room-1","volume":30,"mute":false}}),
+        9200,
+    );
+    assert_eq!(woke(effects), 1); // A completed command wakes the display.
+    let other = "00000000-0000-0000-0000-000000000009";
+    assert_eq!(
+        state(&mut c, 9300, "2026-10-17T00:00:10Z", other, "Song", 60),
+        0
+    ); // Wrong session.
+}

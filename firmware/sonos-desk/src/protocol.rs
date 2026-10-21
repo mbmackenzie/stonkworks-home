@@ -45,6 +45,16 @@ pub struct RoomStatus {
 #[derive(Deserialize)]
 pub struct RoomState {
     pub room_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub artwork_url: String,
+    #[serde(default)]
+    pub playback_state: String,
     pub volume: u8,
     pub mute: bool,
 }
