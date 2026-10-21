@@ -453,12 +453,12 @@ the display. Omitting the HTTP origin keeps the panel off and controls available
 The diagnostic images retain their previous roles.
 
 The display worker waits for fresh MQTT controller readiness. It shares the
-network worker's Wi-Fi connection and never starts or stops Wi-Fi. HTTP, PNG
-row decoding, SPI transfer and BUSY waits run separately from MQTT/input handling.
+network worker's Wi-Fi connection and never starts or stops Wi-Fi. HTTP bitmap
+downloads, SPI transfer and BUSY waits run separately from MQTT/input handling.
 Only the display task owns the display pins; the input loop owns the controls.
 
 **What wakes it.** The MQTT thread wakes the worker when the room's visible state
-changes (title, artist, album, artwork URL, `playback_state`, volume or mute) and
+changes (room name, title, artist, album, artwork URL, `playback_state`, volume or mute) and
 when a command result completes; results carry the new state sooner than the
 service's roughly three-second polling. Bursts, such as spinning the dial, coalesce
 into one fetch 150 ms after the first change. Each such fetch is followed by one

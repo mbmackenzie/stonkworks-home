@@ -46,6 +46,8 @@ pub struct RoomStatus {
 pub struct RoomState {
     pub room_id: String,
     #[serde(default)]
+    pub room: String,
+    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub artist: String,
