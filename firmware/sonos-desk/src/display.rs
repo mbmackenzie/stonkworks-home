@@ -9,6 +9,9 @@ use ssd1677::Interface;
 use std::thread;
 use std::time::Duration;
 
+/// Hardware comparison (2026-10-21): more passes did not reduce text ghosting.
+const PARTIAL_PASSES: u8 = 1;
+
 pub struct DisplayPins {
     pub power: gpio::Gpio4<'static>,
     pub reset: gpio::Gpio22<'static>,
@@ -124,7 +127,6 @@ impl Panel {
         old: &[u8; 48_000],
         new: &[u8; 48_000],
         region: panel::Region,
-        style: panel::Style,
     ) -> anyhow::Result<()> {
         let started = std::time::Instant::now();
         let result = (|| -> anyhow::Result<()> {
@@ -133,7 +135,7 @@ impl Panel {
             let mut io =
                 Interface::new(&mut self.spi, &mut self.dc, &mut self.reset, &mut self.busy);
             io.set_busy_timeout(15_000);
-            panel::show_partial(&mut io, old, new, region, style, &mut FreeRtos)
+            panel::show_partial(&mut io, old, new, region, PARTIAL_PASSES, &mut FreeRtos)
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
             println!(
                 "Display: partial refresh finished in {} ms",

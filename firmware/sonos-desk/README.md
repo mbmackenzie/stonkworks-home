@@ -484,13 +484,20 @@ version with format=bitmap` (logged as `Display: update failed`). The previous i
 the controls keep working, retrying every 3 minutes. Redeploy the service to restore updates.
 
 **How it draws.** The first frame is a full refresh. After that, the worker
-compares each fetched frame with the cached one (`changed_region`) and partially
-refreshes only the byte-aligned box that changed, using Waveshare's partial
-sequence on both RAM planes (`show_partial`). Identical frames and HTTP 304
-responses cost no panel traffic. The cached frame is replaced only after the panel
-call succeeds. A partial takes about 0.5 to 0.9 seconds on this panel (see the
-spike findings in the design spec). PWR stays high after every draw; the panel
-sleeps with its RAM retained.
+compares each fetched frame with the cached one (`changed_regions`) and partially
+refreshes each cluster of change as its own byte-aligned box, for example the album
+art and the text column separately (at most four boxes, otherwise one bounding box),
+using Waveshare's partial sequence on both RAM planes (`show_partial`). Identical
+frames and HTTP 304 responses cost no panel traffic. The cached frame is replaced only
+after the panel call succeeds. Each refresh takes about 0.55 seconds plus transfer
+time, so a `next` press, with art and text as separate boxes, settles in about 2
+seconds. PWR stays high after every draw; the panel sleeps with its RAM retained.
+
+**Drive style.** The panel's partial waveform leaves faint residue on thin strokes, most
+visible on text after a track with a lot of it. On hardware (2026-10-21), one, two and
+three direct passes looked the same, and erasing text to white before drawing it was
+clearly worse (letter outlines plus a visible blink), so each box gets one pass.
+The residue is cleared by the idle full refresh below.
 
 This controller **swaps its two RAM planes after every refresh**. A partial that
 wrote only its changed window would leave the rest of the screen holding "old" in
