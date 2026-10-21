@@ -1,7 +1,7 @@
 use crate::{display::Panel, frame_http};
 use sonos_desk_firmware::{
     config::Config,
-    frame::{self, Refresh},
+    frame::{self, Action, Schedule, Signals},
 };
 use std::{
     sync::{
@@ -14,12 +14,14 @@ use std::{
 
 pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>) {
     let start = Instant::now();
-    let mut refresh = Refresh::default();
+    let mut schedule = Schedule::default();
     loop {
         let now = start.elapsed().as_millis() as u64;
-        if ready.load(Ordering::Acquire) != 0 && refresh.due(now) {
+        if ready.load(Ordering::Acquire) != 0
+            && schedule.update(Signals::default(), now) == Action::Fetch
+        {
             let result = (|| -> anyhow::Result<()> {
-                let response = frame_http::fetch_connected(&config, refresh.etag(now))?;
+                let response = frame_http::fetch_connected(&config, schedule.etag())?;
                 let Some(bytes) = response.png else {
                     println!("Display: frame unchanged; skipping refresh");
                     return Ok(());
@@ -37,13 +39,13 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>) {
                         thread::park();
                     }
                 }
-                refresh.rendered(response.etag, start.elapsed().as_millis() as u64);
+                schedule.full_shown(response.etag, start.elapsed().as_millis() as u64);
                 Ok(())
             })();
-            if let Err(error) = result {
+            if let Err(error) = &result {
                 println!("Display: update failed: {error}; keeping previous image");
             }
-            refresh.checked(start.elapsed().as_millis() as u64);
+            schedule.fetched(start.elapsed().as_millis() as u64, result.is_ok());
         }
         thread::sleep(Duration::from_millis(250));
     }

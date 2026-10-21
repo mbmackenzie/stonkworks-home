@@ -1,6 +1,9 @@
 //! Decode the existing mono HTTP contract into one packed panel buffer.
 use crate::panel::Frame;
-use std::io::{BufReader, Cursor};
+use std::{
+    io::{BufReader, Cursor},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 pub const MAX_PNG_BYTES: usize = 128 * 1024;
 
@@ -95,31 +98,135 @@ pub fn changed_region(old: &[u8; 48_000], new: &[u8; 48_000]) -> Option<Region> 
     })
 }
 
-/// Cache only the ETag of an image actually shown on the panel.
+/// Counters bumped from other threads; the C6 has only 32-bit atomics.
 #[derive(Default)]
-pub struct Refresh {
+pub struct DisplayLink {
+    changed: AtomicU32,
+    activity: AtomicU32,
+    force: AtomicU32,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct Signals {
+    pub changed: u32,
+    pub activity: u32,
+    pub force: u32,
+}
+
+impl DisplayLink {
+    /// Visible Sonos state changed (MQTT state or a completed command result).
+    pub fn bump_changed(&self) {
+        self.changed.fetch_add(1, Ordering::Release);
+    }
+
+    /// A physical input happened; full refreshes wait for quiet.
+    pub fn bump_activity(&self) {
+        self.activity.fetch_add(1, Ordering::Release);
+    }
+
+    /// The user asked for a full refresh now.
+    pub fn bump_force(&self) {
+        self.force.fetch_add(1, Ordering::Release);
+    }
+
+    pub fn snapshot(&self) -> Signals {
+        Signals {
+            changed: self.changed.load(Ordering::Acquire),
+            activity: self.activity.load(Ordering::Acquire),
+            force: self.force.load(Ordering::Acquire),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Action {
+    Wait,
+    Fetch,
+    FullRefresh,
+}
+
+const DEBOUNCE_MS: u64 = 150;
+const SETTLE_MS: u64 = 2_500;
+const POLL_MS: u64 = 180_000;
+const STARTUP_RETRY_MS: u64 = 10_000;
+const IDLE_MS: u64 = 60_000;
+const BACKSTOP_MS: u64 = 86_400_000;
+
+/// Decide when to fetch a frame and when to clean ghosting with a full refresh.
+/// Only the ETag of an image actually shown on the panel is kept.
+#[derive(Default)]
+pub struct Schedule {
+    seen: Signals,
+    fetch_at: Option<u64>,
+    settle_at: Option<u64>,
     next_check: u64,
-    displayed_at: u64,
+    shown: bool,
+    last_activity: u64,
+    last_full: u64,
+    partials: u32,
     etag: Option<String>,
 }
 
-impl Refresh {
-    pub fn due(&self, now_ms: u64) -> bool {
-        now_ms >= self.next_check
+impl Schedule {
+    pub fn update(&mut self, signals: Signals, now_ms: u64) -> Action {
+        if signals.changed != self.seen.changed {
+            self.fetch_at.get_or_insert(now_ms + DEBOUNCE_MS);
+            self.last_activity = now_ms;
+        }
+        if signals.activity != self.seen.activity {
+            self.last_activity = now_ms;
+        }
+        let force = signals.force != self.seen.force;
+        self.seen = signals;
+        if force && self.shown {
+            return Action::FullRefresh;
+        }
+        if self.fetch_at.is_some_and(|at| now_ms >= at) {
+            self.fetch_at = None;
+            self.settle_at = Some(now_ms + SETTLE_MS); // The server's state may still be moving.
+            return Action::Fetch;
+        }
+        if self.settle_at.is_some_and(|at| now_ms >= at) {
+            self.settle_at = None;
+            return Action::Fetch;
+        }
+        if now_ms >= self.next_check {
+            return Action::Fetch;
+        }
+        let idle = now_ms.saturating_sub(self.last_activity) >= IDLE_MS;
+        if self.shown
+            && idle
+            && (self.partials > 0 || now_ms.saturating_sub(self.last_full) >= BACKSTOP_MS)
+        {
+            return Action::FullRefresh;
+        }
+        Action::Wait
     }
 
-    pub fn checked(&mut self, now_ms: u64) {
-        self.next_check = now_ms.saturating_add(180_000);
+    /// ETag of the image on the panel; it does not expire (the backstop redraws instead).
+    pub fn etag(&self) -> Option<&str> {
+        self.etag.as_deref()
     }
 
-    pub fn etag(&self, now_ms: u64) -> Option<&str> {
-        (now_ms.saturating_sub(self.displayed_at) < 86_400_000)
-            .then_some(self.etag.as_deref())
-            .flatten()
+    /// A fetch attempt ended: success, 304, or (`ok` false) an HTTP or decode failure.
+    pub fn fetched(&mut self, now_ms: u64, ok: bool) {
+        let wait = if ok || self.shown {
+            POLL_MS
+        } else {
+            STARTUP_RETRY_MS
+        };
+        self.next_check = now_ms.saturating_add(wait);
     }
 
-    pub fn rendered(&mut self, etag: Option<String>, now_ms: u64) {
+    pub fn partial_shown(&mut self, etag: Option<String>, _now_ms: u64) {
         self.etag = etag;
-        self.displayed_at = now_ms;
+        self.partials += 1;
+    }
+
+    pub fn full_shown(&mut self, etag: Option<String>, now_ms: u64) {
+        self.etag = etag;
+        self.shown = true;
+        self.last_full = now_ms;
+        self.partials = 0;
     }
 }

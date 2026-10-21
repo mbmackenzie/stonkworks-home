@@ -155,27 +155,6 @@ fn frame_decoder_accepts_only_complete_mono_frames() {
 
 #[cfg(feature = "frame-check")]
 #[test]
-fn refresh_waits_and_only_caches_displayed_frames() {
-    use sonos_desk_firmware::frame::Refresh;
-    let mut refresh = Refresh::default();
-    assert!(refresh.due(0));
-    assert_eq!(refresh.etag(0), None);
-    refresh.checked(0); // Failed fetch/decode: no new ETag or immediate retry.
-    assert!(!refresh.due(179_999));
-    assert!(refresh.due(180_000));
-    refresh.rendered(Some("\"first\"".into()), 180_000);
-    refresh.checked(180_000);
-    assert_eq!(refresh.etag(360_000), Some("\"first\""));
-    refresh.checked(360_000); // 304 or failed replacement retains displayed ETag.
-    assert_eq!(refresh.etag(540_000), Some("\"first\""));
-    assert!(!refresh.due(539_999));
-    assert!(refresh.due(540_000));
-    assert_eq!(refresh.etag(86_579_999), Some("\"first\""));
-    assert_eq!(refresh.etag(86_580_000), None); // Force a full refresh after a day.
-}
-
-#[cfg(feature = "frame-check")]
-#[test]
 fn changed_region_bounds_differences() {
     use sonos_desk_firmware::frame::{Region, changed_region};
     let old = [0xff; 48_000];
@@ -296,5 +275,135 @@ fn partial_stops_on_busy_timeout() {
         );
         assert_eq!(wire.packets.is_empty(), fail_wait == 1);
         assert!(!wire.packets.iter().any(|p| p.0 == 0x10));
+    }
+}
+
+#[cfg(feature = "frame-check")]
+mod schedule {
+    use sonos_desk_firmware::frame::{Action, DisplayLink, Schedule, Signals};
+
+    const E: fn() -> Option<String> = || Some("\"e\"".into());
+
+    /// A schedule that has already shown a full frame at `now`.
+    fn shown(now: u64) -> Schedule {
+        let mut s = Schedule::default();
+        assert_eq!(s.update(Signals::default(), now), Action::Fetch);
+        s.fetched(now, true);
+        s.full_shown(E(), now);
+        s
+    }
+
+    /// Answer every Fetch with a 304, returning the first other action.
+    fn drive(s: &mut Schedule, signals: Signals, now: u64) -> Action {
+        loop {
+            match s.update(signals, now) {
+                Action::Fetch => s.fetched(now, true),
+                other => return other,
+            }
+        }
+    }
+
+    fn signals(changed: u32, activity: u32, force: u32) -> Signals {
+        Signals {
+            changed,
+            activity,
+            force,
+        }
+    }
+
+    #[test]
+    fn schedule_coalesces_dial_bursts() {
+        let mut s = shown(0);
+        let mut fetches = 0;
+        for k in 0..20_u32 {
+            if s.update(signals(k + 1, 0, 0), 1_000 + u64::from(k) * 5) == Action::Fetch {
+                fetches += 1;
+            }
+        }
+        assert_eq!(fetches, 0);
+        assert_eq!(s.update(signals(20, 0, 0), 1_150), Action::Fetch);
+        s.fetched(1_150, true);
+        assert_eq!(s.update(signals(20, 0, 0), 1_151), Action::Wait);
+    }
+
+    #[test]
+    fn schedule_settles_once_even_when_pixels_are_unchanged() {
+        let mut s = shown(0);
+        assert_eq!(s.update(signals(1, 0, 0), 1_000), Action::Wait);
+        assert_eq!(s.update(signals(1, 0, 0), 1_150), Action::Fetch);
+        s.fetched(1_150, true); // 304 or identical: no partial_shown.
+        assert_eq!(s.update(signals(1, 0, 0), 3_649), Action::Wait);
+        assert_eq!(s.update(signals(1, 0, 0), 3_650), Action::Fetch);
+        s.fetched(3_650, true);
+        assert_eq!(s.update(signals(1, 0, 0), 6_200), Action::Wait); // No second settle.
+    }
+
+    #[test]
+    fn schedule_does_not_hammer_a_failing_startup_fetch() {
+        let mut s = Schedule::default();
+        assert_eq!(s.update(Signals::default(), 0), Action::Fetch);
+        s.fetched(0, false);
+        for now in (100..10_000).step_by(100) {
+            assert_eq!(s.update(Signals::default(), now), Action::Wait);
+        }
+        assert_eq!(s.update(Signals::default(), 10_000), Action::Fetch);
+    }
+
+    #[test]
+    fn schedule_cleans_up_only_when_idle() {
+        let mut s = shown(0);
+        assert_eq!(drive(&mut s, signals(1, 0, 0), 1_000), Action::Wait);
+        assert_eq!(drive(&mut s, signals(1, 0, 0), 1_150), Action::Wait);
+        s.partial_shown(E(), 1_150);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 30_000), Action::Wait); // Input resets idle.
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 89_999), Action::Wait);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 90_000), Action::FullRefresh);
+        s.full_shown(E(), 90_000);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 200_000), Action::Wait);
+        // No partials since the last full refresh: nothing to clean up.
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 10_000_000), Action::Wait);
+    }
+
+    #[test]
+    fn schedule_backstop_survives_partials_and_304() {
+        const DAY: u64 = 86_400_000;
+        let mut s = shown(0);
+        s.partial_shown(E(), DAY / 2); // Partials never advance the full-refresh clock.
+        assert_eq!(drive(&mut s, signals(0, 1, 0), DAY), Action::Wait); // Active: deferred.
+        assert_eq!(
+            drive(&mut s, signals(0, 1, 0), DAY + 60_000),
+            Action::FullRefresh
+        );
+        s.full_shown(E(), DAY + 60_000);
+        // Every fetch is a 304 from here on; the backstop still redraws the cached frame.
+        assert_eq!(
+            drive(&mut s, signals(0, 1, 0), 2 * DAY + 60_000 - 1),
+            Action::Wait
+        );
+        assert_eq!(
+            drive(&mut s, signals(0, 1, 0), 2 * DAY + 60_000),
+            Action::FullRefresh
+        );
+    }
+
+    #[test]
+    fn schedule_forced_refresh_is_immediate() {
+        let link = DisplayLink::default();
+        let mut s = shown(0);
+        link.bump_activity();
+        assert_eq!(s.update(link.snapshot(), 100), Action::Wait);
+        link.bump_force();
+        assert_eq!(s.update(link.snapshot(), 101), Action::FullRefresh);
+        assert_eq!(s.update(link.snapshot(), 102), Action::Wait);
+    }
+
+    #[test]
+    fn schedule_keeps_etag_and_polls_on_failure() {
+        let mut s = shown(0);
+        assert_eq!(s.etag(), Some("\"e\""));
+        s.fetched(0, false); // A failed replacement keeps the displayed ETag.
+        assert_eq!(s.etag(), Some("\"e\""));
+        assert_eq!(s.update(Signals::default(), 179_999), Action::Wait);
+        assert_eq!(s.update(Signals::default(), 180_000), Action::Fetch);
     }
 }
