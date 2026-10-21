@@ -15,6 +15,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 log = logging.getLogger(__name__)
 MAX_BYTES = 5 * 1024 * 1024
 MAX_PIXELS = 16_000_000
+# A track change passes through TRANSITIONING; frames keep the settled label this long.
+TRANSITION_HOLD_SECONDS = 10
 
 
 def font(size, bold=False):
@@ -49,7 +51,12 @@ class Renderer:
         self._owns_client = client is None
         self.client = httpx.Client(max_redirects=3, trust_env=False) if client is None else client
         self.clock = clock
-        self.artwork, self.frames = OrderedDict(), OrderedDict()
+        self.artwork, self.frames, self.bitmaps, self.transport = (
+            OrderedDict(),
+            OrderedDict(),
+            OrderedDict(),
+            OrderedDict(),
+        )
         self.lock = threading.Lock()
 
     def close(self):
@@ -62,6 +69,26 @@ class Renderer:
         cache.move_to_end(key)
         while len(cache) > limit:
             cache.popitem(last=False)
+
+    def _transport(self, state):
+        """The playback_state to draw: hold the settled label through a brief TRANSITIONING.
+
+        The header word changing twice per track change makes thin text ghost on the
+        partially refreshed e-ink panel. /state still reports the real state.
+        """
+        key = state.get("room_id") or state.get("room", "")
+        current = state.get("playback_state", "")
+        entry = self.transport.get(key)
+        if current != "TRANSITIONING":
+            self._put(self.transport, key, {"settled": current, "since": None}, 32)
+            return current
+        if entry is None:
+            return current
+        if entry["since"] is None:
+            entry["since"] = self.clock()
+        if self.clock() - entry["since"] >= TRANSITION_HOLD_SECONDS:
+            return current
+        return entry["settled"]
 
     def _art(self, url):
         cached = self.artwork.get(url)
@@ -113,8 +140,22 @@ class Renderer:
         self._put(self.artwork, url, (self.clock() + (3600 if image else 30), image), 16)
         return image
 
+    def bitmap(self, state):
+        """The mono frame as 48,000 packed bytes: 100 per row, MSB first, 1 = white."""
+        png = self.frame(state, "mono")
+        with self.lock:
+            if png in self.bitmaps:
+                self.bitmaps.move_to_end(png)
+                return self.bitmaps[png]
+        with Image.open(BytesIO(png)) as image:
+            packed = image.convert("1", dither=Image.Dither.NONE).tobytes()
+        with self.lock:
+            self._put(self.bitmaps, png, packed, 32)
+        return packed
+
     def frame(self, state, mode="gray4"):
         with self.lock:
+            state = dict(state, playback_state=self._transport(state))
             art = self._art(state.get("artwork_url", ""))
             art_id = sha256(art.tobytes()).digest() if art else b""
             visible = ("room", "title", "artist", "album", "playback_state", "volume", "mute")

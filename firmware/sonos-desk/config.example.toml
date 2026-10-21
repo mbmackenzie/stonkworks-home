@@ -1,0 +1,20 @@
+# Copy to config.local.toml. Keep actual settings and credentials out of Git.
+# Prefer a local NTP server if normal operation must work without Internet.
+ntp_server = "time.example.test"
+room_id = "RINCON_00000000000101400"
+http_base_url = "http://sonos-desk.example.test:8008"
+
+[wifi]
+ssid = "YOUR_WIFI_NAME"
+password = "CHANGE_ME"
+
+[mqtt]
+# DNS hostname matching the broker certificate; no mqtts:// prefix.
+host = "mqtt.example.test"
+port = 8883
+username = "desk-controller"
+password = "CHANGE_ME"
+client_id = "desk-controller-01"
+instance = "main"
+
+# Copy the broker's trusted CA PEM to broker-ca.local.pem alongside this file.

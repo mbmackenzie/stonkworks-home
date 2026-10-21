@@ -84,6 +84,17 @@ Track/artist/album are wrapped and truncated within the display bounds. Missing
 or bad artwork uses a record placeholder. Playback progress does not redraw
 the display.
 
+`format=bitmap` (valid only with `mode=mono`, otherwise 422) returns the same image
+as 48,000 raw bytes, `application/octet-stream`: 100 bytes per row, most significant
+bit first, 1 = white, 0 = black. It exists for small controllers that cannot afford a PNG
+decoder; it has its own ETag and honors `If-None-Match` like the PNG. `format=png` is the
+default.
+
+While Sonos reports `TRANSITIONING` (as it does during every track change), frames keep
+drawing the last settled transport label for up to 10 seconds, and show `TRANSITIONING`
+as-is when no settled label is known or the transition lasts longer. This keeps the header
+from changing twice per track on e-ink displays; `/state` still reports the real state.
+
 Start with a frame request every 3–5 seconds. Store the response's quoted
 `ETag`, then send it as `If-None-Match` on subsequent frame requests. A 304
 contains no image body: keep the current display without refreshing it. Use

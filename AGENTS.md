@@ -9,7 +9,18 @@ network settings, and device assignments.
 
 The current implementation is the Sonos Desk source extraction: a FastAPI/SoCo
 backend, browser controller, Pillow e-ink renderer, and optional MQTT 5 adapter.
-Home management, device configuration contracts, device onboarding, firmware,
+Rust firmware in `firmware/sonos-desk/` has a library-backed input decoder and
+an ESP32-C6 GPIO/USB input-check binary. A separate connection-check binary
+connects Wi-Fi, synchronizes NTP, and reads MQTT availability over verified TLS.
+The controller binary sends physical-input commands for one locally assigned
+room, with fresh-state readiness gates and no application retry/reconnect replay.
+A separate display-check binary draws one fixed e-ink pattern. The frame-check
+binary fetches and displays one monochrome Sonos HTTP frame per boot. The controller
+updates the screen in a separate worker over the shared Wi-Fi connection: MQTT state
+changes and command results trigger frame fetches, changed regions are partially
+refreshed, and idle cleanup, a 24-hour backstop and a Mute hold do full refreshes,
+while MQTT controls continue.
+Home management, device configuration contracts, device onboarding,
 registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 
 Scope comes from the “Clarify Stonkworks Home Scope” conversation
@@ -51,6 +62,9 @@ current source and documentation to establish implemented behavior.
 - `services/sonos-desk/tests/`: simulated-speaker API, backend, and renderer
   tests; optional Playwright browser check and disposable-broker MQTT checks.
 - `protocols/v1/`: implemented Sonos MQTT topics, message schemas, and client usage.
+- `firmware/sonos-desk/`: Rust ESP32-C6 controls, input/network diagnostics,
+  build instructions, and a small host test suite. From that directory,
+  `just firmware-monitor` opens USB monitoring using the project-local espflash tool.
 - `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example, optional
   MQTT overlay, and `.env.example`, not the household's deployed stack.
 - `docs/sonos-desk.md`: HTTP contract, command semantics, rendering, and polling.

@@ -86,6 +86,26 @@ def test_frames_and_conditional_requests(setup):
     assert client.get("/frame?room=office").headers["etag"] != etag
 
 
+def test_mono_bitmap_frames_match_the_png(setup):
+    from io import BytesIO
+
+    from PIL import Image
+
+    client, _speaker = setup
+    png = client.get("/frame?room=office&mode=mono")
+    bitmap = client.get("/frame?room=office&mode=mono&format=bitmap")
+    assert bitmap.status_code == 200
+    assert bitmap.headers["content-type"] == "application/octet-stream"
+    assert len(bitmap.content) == 800 // 8 * 480  # 100 bytes per row, MSB first, 1 = white
+    expected = Image.open(BytesIO(png.content)).convert("1", dither=Image.Dither.NONE).tobytes()
+    assert bitmap.content == expected
+    assert bitmap.headers["etag"] != png.headers["etag"]
+    again = client.get("/frame?room=office&mode=mono&format=bitmap", headers={"If-None-Match": bitmap.headers["etag"]})
+    assert again.status_code == 304
+    assert client.get("/frame?room=office&format=bitmap").status_code == 422  # gray4 has no 1-bit form
+    assert client.get("/frame?room=office&mode=mono&format=jpeg").status_code == 422
+
+
 def test_service_lives_without_speakers():
     backend = SonosBackend(discover=lambda **kw: [])
     with TestClient(create_app(backend, Renderer())) as client:

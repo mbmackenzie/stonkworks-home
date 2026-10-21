@@ -4,7 +4,7 @@ from hashlib import sha256
 from importlib.resources import files
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import Field
 
@@ -49,14 +49,22 @@ def create_router(backend, renderer, mqtt_status):
 
     @router.get("/frame")
     def frame(
-        request: Request, room: str = Query(min_length=1, max_length=256), mode: Literal["gray4", "mono"] = "gray4"
+        request: Request,
+        room: str = Query(min_length=1, max_length=256),
+        mode: Literal["gray4", "mono"] = "gray4",
+        format: Literal["png", "bitmap"] = "png",
     ):
-        png = renderer.frame(backend.state(room), mode)
-        etag = '"' + sha256(png).hexdigest() + '"'
+        if format == "bitmap" and mode != "mono":
+            raise HTTPException(422, "format=bitmap requires mode=mono")
+        state = backend.state(room)
+        body = renderer.bitmap(state) if format == "bitmap" else renderer.frame(state, mode)
+        etag = '"' + sha256(body).hexdigest() + '"'
         headers = {"ETag": etag, "Cache-Control": "no-cache"}
         tags = [tag.strip().removeprefix("W/") for tag in request.headers.get("if-none-match", "").split(",")]
         if "*" in tags or etag in tags:
             return Response(status_code=304, headers=headers)
-        return Response(png, media_type="image/png", headers=headers)
+        return Response(
+            body, media_type="application/octet-stream" if format == "bitmap" else "image/png", headers=headers
+        )
 
     return router

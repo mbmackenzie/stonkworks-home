@@ -1,0 +1,11 @@
+# Watch button and encoder events over USB. Does not flash firmware.
+firmware-monitor:
+    target/tools/bin/espflash monitor --skip-update-check
+
+# Build input-check, network-check, controller, display-check, or frame-check for the ESP32-C6.
+firmware-build mode="input-check":
+    PATH="/usr/bin:$PWD/target/tools/bin:$PWD/target/build-tools/bin:$PATH" cargo build --locked -Zbuild-std=std,panic_abort --target riscv32imac-esp-espidf --features {{ quote(mode) }} --bin {{ quote(mode) }}
+
+# Close the USB monitor first. Uses the board's 8 MB flash and a 3 MB app partition.
+firmware-flash mode="input-check":
+    target/tools/bin/espflash flash --chip esp32c6 --flash-size 8mb --skip-update-check --bootloader target/riscv32imac-esp-espidf/debug/build/bootloader.bin --partition-table partitions.csv target/riscv32imac-esp-espidf/debug/{{ quote(mode) }}

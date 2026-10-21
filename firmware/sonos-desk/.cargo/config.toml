@@ -1,0 +1,10 @@
+# Keep the default target as your computer so `cargo test` stays simple.
+# Select the ESP32-C6 explicitly when building the device binary.
+[target.riscv32imac-esp-espidf]
+linker = "ldproxy"
+rustflags = ["--cfg", "espidf_time64"]
+
+[env]
+MCU = "esp32c6"
+ESP_IDF_VERSION = "v5.5.1"
+ESP_IDF_TOOLS_INSTALL_DIR = "workspace"
