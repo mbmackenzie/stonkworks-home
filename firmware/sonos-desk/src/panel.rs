@@ -21,6 +21,14 @@ pub struct Region {
     pub y1: u16,
 }
 
+impl Region {
+    /// Album art is the one box large in both directions (about 360 x 360). The text
+    /// column is wide but short, so it must not be mistaken for art.
+    pub fn looks_like_art(&self) -> bool {
+        self.x1 - self.x0 >= 300 && self.y1 - self.y0 >= 300
+    }
+}
+
 /// One row of panel RAM, in the order sent. Calibrated to the user's mounting:
 /// 180° means reverse byte and bit order, so stream row `r` is frame row `479 - r`.
 fn ram_row(frame: &[u8; 48_000], row: usize) -> [u8; 100] {

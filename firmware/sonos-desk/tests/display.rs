@@ -627,3 +627,35 @@ fn erase_then_write_drives_white_first() {
         .count();
     assert_eq!(synced, 2); // Both planes end up holding the new window.
 }
+
+#[test]
+fn only_a_box_large_in_both_directions_counts_as_art() {
+    let art = Region {
+        x0: 24,
+        x1: 384,
+        y0: 76,
+        y1: 436,
+    };
+    let text_block = Region {
+        x0: 408,
+        x1: 736,
+        y0: 90,
+        y1: 292,
+    }; // Title, artist, album.
+    let label = Region {
+        x0: 696,
+        x1: 776,
+        y0: 22,
+        y1: 36,
+    };
+    let volume_bar = Region {
+        x0: 408,
+        x1: 776,
+        y0: 421,
+        y1: 437,
+    };
+    assert!(art.looks_like_art());
+    assert!(!text_block.looks_like_art());
+    assert!(!label.looks_like_art());
+    assert!(!volume_bar.looks_like_art());
+}

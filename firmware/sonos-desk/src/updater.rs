@@ -6,7 +6,7 @@ use sonos_desk_firmware::{
     config::Config,
     frame::{Action, Schedule, changed_regions},
     link::DisplayLink,
-    panel::{Frame, Region, Style},
+    panel::{Frame, Style},
 };
 use std::{
     sync::{
@@ -36,10 +36,6 @@ const STYLES: [(&str, Style, Style); 3] = [
         Style::Direct(1),
     ),
 ];
-
-fn is_art(region: Region) -> bool {
-    u32::from(region.x1 - region.x0) * u32::from(region.y1 - region.y0) > 30_000
-}
 
 fn heap(label: &str) {
     // SAFETY: Plain ESP-IDF getters with no preconditions.
@@ -129,7 +125,7 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                             } else {
                                 for region in regions {
                                     let (_, text, art) = STYLES[style];
-                                    let style = if is_art(region) { art } else { text };
+                                    let style = if region.looks_like_art() { art } else { text };
                                     println!(
                                         "Display: partial x {}..{} y {}..{} {style:?}",
                                         region.x0, region.x1, region.y0, region.y1
