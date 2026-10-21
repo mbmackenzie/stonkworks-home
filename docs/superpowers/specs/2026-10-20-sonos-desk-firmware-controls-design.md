@@ -2,8 +2,14 @@
 
 Date: 2026-10-20
 
-Status: Design agreed in conversation; written spec awaiting user review.
+Status: Written spec approved by the user; lean verification amendment added
+at the user's direction during implementation planning.
 No firmware is implemented by this document.
+
+The user approved the written spec, then requested lean verification during
+planning: a few table-driven tests and a short manual acceptance checklist,
+without an extensive test harness. The verification section below incorporates
+that later direction.
 
 ## Intent and success criteria
 
@@ -209,16 +215,18 @@ is included.
 Deliver an explicit input-check mode that logs semantic inputs over native
 USB and cannot publish Sonos commands. Normal mode enables MQTT operation.
 
-Host tests cover button bounce and hold/release, encoder direction and detent
-decoding, volume batching deadlines, bounded overload, freshness and session
-changes, mute guarding, result correlation, expiry, and disconnect cleanup.
-Use fake clocks and transport events rather than sleeping through timeouts.
+Keep automated verification small: table-driven input traces and controller
+event sequences cover debounce, complete detents, batching, stale/session
+gates, and uncertain/disconnected command behavior. Use supplied timestamps
+rather than sleeping or introducing a clock framework. Prefer a handful of
+tests with several cases over one test per method or protocol field.
 
-An optional disposable-broker harness with generated test certificates and
-credentials verifies TLS trust/hostname rejection, authentication, MQTT 5
-subscriptions and actual PUBLISH expiry, non-retained QoS 1 commands, results,
-reconnect readiness, and absence of reconnect command replay. Use a simulated
-Sonos backend. Never use household credentials or alter its broker for tests.
+Use a short opt-in manual broker checklist for verified TLS, authentication,
+MQTT 5 expiry, QoS/retain flags, results, and absence of reconnect replay.
+Do not build an automated broker/certificate/container harness for this slice.
+Observe commands using an isolated test instance and synthetic room data
+before intentionally testing live controls. Never use a real command topic
+for synthetic tests or alter household infrastructure automatically.
 
 Build the ESP32-C6 target and run Rust formatting/linting and host tests.
 Document exact toolchain and flashing commands. Hardware acceptance proceeds
