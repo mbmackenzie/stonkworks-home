@@ -14,7 +14,8 @@ an ESP32-C6 GPIO/USB input-check binary. A separate connection-check binary
 connects Wi-Fi, synchronizes NTP, and reads MQTT availability over verified TLS.
 The controller binary sends physical-input commands for one locally assigned
 room, with fresh-state readiness gates and no application retry/reconnect replay.
-Device display rendering is not implemented.
+A separate display-check binary draws one fixed e-ink pattern; live Sonos
+frames on the device are not implemented.
 Home management, device configuration contracts, device onboarding,
 registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 

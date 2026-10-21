@@ -2,7 +2,7 @@
 firmware-monitor:
     target/tools/bin/espflash monitor --skip-update-check
 
-# Build input-check, network-check, or controller for the ESP32-C6.
+# Build input-check, network-check, controller, or display-check for the ESP32-C6.
 firmware-build mode="input-check":
     PATH="/usr/bin:$PWD/target/tools/bin:$PWD/target/build-tools/bin:$PATH" cargo build --locked -Zbuild-std=std,panic_abort --target riscv32imac-esp-espidf --features {{ quote(mode) }} --bin {{ quote(mode) }}
 

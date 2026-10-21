@@ -18,7 +18,8 @@ over MQTT 5 with verified TLS. Separate input/network diagnostic images remain a
 see [the firmware walkthrough](firmware/sonos-desk/README.md).
 From `firmware/sonos-desk/`, `just firmware-monitor` opens the USB monitor
 after the local tool setup.
-Device display rendering and Home management
+The `display-check` firmware draws a fixed e-ink test pattern.
+Live Sonos frames on the device and Home management
 are future work. Existing household applications remain outside this project.
 
 ## Run from source

@@ -1224,14 +1224,26 @@ name = "sonos-desk-firmware"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "embedded-hal 1.0.0",
  "embuild",
  "esp-idf-svc",
  "serde",
  "serde_json",
+ "ssd1677",
  "tamer",
  "time",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "ssd1677"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2560a0e0d835b69b9666494f3337d723801db172255970d983996bb274d2be13"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "log",
 ]
 
 [[package]]

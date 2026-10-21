@@ -4,7 +4,8 @@ Rust firmware is being built in small learning chunks. The portable input
 decoder has an ESP32-C6 GPIO reader and a USB input-check binary. A separate
 network-check binary adds Wi-Fi, clock synchronization, and read-only MQTT 5
 over verified TLS. The controller binary sends Sonos commands from physical
-inputs. Display rendering comes later.
+inputs. A separate display-check binary draws one fixed black/white pattern.
+Live Sonos frames on the display come later.
 The input decoder uses the small [`tamer`](https://docs.rs/tamer/0.1.0/) crate
 for debounce and quadrature decoding. The device binary uses ESP-IDF through
 Rust bindings. We keep the mapping to our controls in this repository.
@@ -340,3 +341,70 @@ These fault/wire checks have not been performed. Host tests and successful
 live controls do not establish those hardware/broker failure cases. Synthetic
 room updates belong only on an isolated instance with a separate account;
 never publish them over the household service's state topics.
+
+## First e-ink chunk: fixed pattern
+
+With the display connected to the agreed pins above, close the USB monitor
+and run these commands from this directory:
+
+```sh
+just firmware-build display-check
+just firmware-flash display-check
+just firmware-monitor
+```
+
+This diagnostic image replaces the controller temporarily. It needs no local
+credentials, starts no networking, and sends no Sonos commands. Resetting the
+board draws the pattern once more; there is no automatic refresh/retry loop.
+
+The expected 800 × 480 image has an eight-pixel black border, a solid square
+at top-left, hollow square at top-right, three bars at bottom-left, checkerboard
+at bottom-right, and a right-pointing arrow. The framebuffer is rotated 180° to match the
+user-confirmed mounting. Distinct corners expose rotation
+and mirroring, and black/white areas expose inverted pixel polarity.
+
+[`src/display.rs`](src/display.rs) uses ESP-IDF's SPI driver in mode 0 at 1 MHz
+on GPIO19/18/21 (clock/data/CS). GPIO20 is DC, GPIO22 reset, GPIO14 BUSY,
+and GPIO4 active-high power control. VCC remains on 3V3; it is separate from
+PWR. The board adapter follows Waveshare's reset timing: high 20 ms, low 2 ms,
+high 20 ms. A dedicated 12 KiB worker keeps setup away from the small main
+stack. The 48,000-byte monochrome framebuffer is allocated on the heap.
+
+[`src/panel.rs`](src/panel.rs) uses the existing
+[`ssd1677` 0.1.0 interface](https://docs.rs/ssd1677/0.1.0/ssd1677/interface/index.html)
+for SPI/DC commands and BUSY polling with a 15-second timeout per wait. The
+panel settings follow Waveshare's exact `EPD_3in97.c` sequence, with both RAM
+planes initialized, full refresh using the OTP waveform, and deep sleep after
+completion. The crate's generic initialization writes additional VCOM/auto-clear
+settings, so it is intentionally bypassed. No custom waveform is supplied.
+The vendor permission notice is preserved in
+[third-party/Waveshare.txt](third-party/Waveshare.txt).
+
+The power-control polarity and shutdown behavior were checked against the
+exact panel's `DEV_Config.c` in
+[Waveshare's official demo archive](https://files.waveshare.com/wiki/3.97inch_e-Paper_HAT%2B/3in97_e-Paper.zip).
+The [manual](https://www.waveshare.com/wiki/3.97inch_e-Paper_HAT%2B_Manual)
+specifies SPI mode 0 and matching supply/IO levels. This checks the supplied
+black/white HAT+ model's documentation; it does not electrically inspect the
+user's wiring or identify an unreported board revision.
+
+Successful USB output ends with `refresh finished; sleep command sent` and
+`power off; verify border, corner markers and right arrow`. A BUSY timeout
+stops the sequence and powers off rather than retrying. PWR stays driven low
+while the program parks. A completed SPI sequence alone does not prove the
+screen displayed the image; visual confirmation is required.
+
+One focused test checks panel commands, addressing, RAM data, full refresh,
+sleep ordering, and stopping at each injected BUSY failure. There are eight
+host tests total with `cargo test --locked --all-features`; the existing seven
+control tests remain unchanged.
+
+Hardware run (2026-10-21): image flashed, booted, and reported completed refresh,
+sleep, and power-off without timeout. The user saw the complete pattern rotated
+180°; byte/bit reversal corrects that mounting orientation. The correction was
+rebuilt and reflashed, and the user confirmed the corrected orientation. Live frames, grayscale,
+partial updates, and simultaneous display
+refresh with MQTT controls are not implemented in this chunk.
+
+To restore physical Sonos controls, close the monitor, then run
+`just firmware-flash controller`. That image keeps the display powered off.
