@@ -7,14 +7,31 @@ pub fn show_pattern<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
     delay: &mut D,
 ) -> Result<(), I::Error> {
-    show_frame(io, &mut pattern(), delay)
+    show_frame(io, &pattern(), delay)
 }
 
 pub type Frame = Box<[u8; 48_000]>;
 
-pub fn show_frame<I: DisplayInterface, D: DelayNs>(
+/// Pixel box in frame orientation; x values are multiples of 8, ends are exclusive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub x0: u16,
+    pub x1: u16,
+    pub y0: u16,
+    pub y1: u16,
+}
+
+/// One row of panel RAM, in the order sent. Calibrated to the user's mounting:
+/// 180° means reverse byte and bit order, so stream row `r` is frame row `479 - r`.
+fn ram_row(frame: &[u8; 48_000], row: usize) -> [u8; 100] {
+    let source = &frame[(479 - row) * 100..][..100];
+    std::array::from_fn(|column| source[99 - column].reverse_bits())
+}
+
+/// Initialize the controller and fill both RAM planes without refreshing.
+pub fn load_planes<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
-    frame: &mut [u8; 48_000],
+    frame: &[u8; 48_000],
     delay: &mut D,
 ) -> Result<(), I::Error> {
     io.busy_wait(delay)?;
@@ -35,17 +52,21 @@ pub fn show_frame<I: DisplayInterface, D: DelayNs>(
         io.send_data(data)?;
     }
     io.busy_wait(delay)?;
-    // Calibrated to the user's mounting: 180° means reverse byte and bit order.
-    frame.reverse();
-    for byte in frame.iter_mut() {
-        *byte = byte.reverse_bits();
-    }
     for command in [0x24, 0x26] {
         io.send_command(command)?;
-        for row in frame.chunks(100) {
-            io.send_data(row)?;
+        for row in 0..480 {
+            io.send_data(&ram_row(frame, row))?;
         }
     }
+    Ok(())
+}
+
+pub fn show_frame<I: DisplayInterface, D: DelayNs>(
+    io: &mut I,
+    frame: &[u8; 48_000],
+    delay: &mut D,
+) -> Result<(), I::Error> {
+    load_planes(io, frame, delay)?;
     io.send_command(0x22)?;
     io.send_data(&[0xf7])?; // Full refresh using the panel's OTP waveform.
     io.send_command(0x20)?;
@@ -56,6 +77,68 @@ pub fn show_frame<I: DisplayInterface, D: DelayNs>(
     io.send_data(&[0x01])?;
     delay.delay_ms(100);
     Ok(())
+}
+
+/// Partial refresh of `region` using Waveshare's `EPD_3in97_Display_Partial` sequence.
+/// Both planes get their window, so the controller drives only changed pixels. The
+/// board adapter must hardware-reset the panel first; the panel stays awake after.
+pub fn show_partial<I: DisplayInterface, D: DelayNs>(
+    io: &mut I,
+    old: &[u8; 48_000],
+    new: &[u8; 48_000],
+    region: Region,
+    delay: &mut D,
+) -> Result<(), I::Error> {
+    // RAM x is mirrored (800 - x) and RAM y equals frame y.
+    let (xs, xe) = ((800 - region.x1) / 8, (800 - region.x0) / 8);
+    let (xs_px, xe_px) = (xs * 8, (xe - 1) * 8);
+    let (y0, y1) = (region.y0, region.y1 - 1);
+    let window = |io: &mut I| -> Result<(), I::Error> {
+        for (command, data) in [
+            (0x11, &[0x03][..]), // X and Y increment, as after the vendor's reset.
+            (
+                0x44,
+                &[
+                    xs_px as u8,
+                    (xs_px >> 8) as u8,
+                    xe_px as u8,
+                    (xe_px >> 8) as u8,
+                ],
+            ),
+            (
+                0x45,
+                &[y0 as u8, (y0 >> 8) as u8, y1 as u8, (y1 >> 8) as u8],
+            ),
+            (0x4e, &[xs_px as u8, (xs_px >> 8) as u8]),
+            (0x4f, &[y0 as u8, (y0 >> 8) as u8]),
+        ] {
+            io.send_command(command)?;
+            io.send_data(data)?;
+        }
+        Ok(())
+    };
+    let plane = |io: &mut I, command: u8, frame: &[u8; 48_000]| -> Result<(), I::Error> {
+        io.send_command(command)?;
+        for y in region.y0..region.y1 {
+            // Stream row 479 - y holds frame row y; send only the window's bytes.
+            io.send_data(&ram_row(frame, 479 - usize::from(y))[usize::from(xs)..usize::from(xe)])?;
+        }
+        Ok(())
+    };
+    io.busy_wait(delay)?;
+    for (command, data) in [(0x18, 0x80), (0x3c, 0x80)] {
+        io.send_command(command)?;
+        io.send_data(&[data])?;
+    }
+    window(io)?;
+    plane(io, 0x26, old)?;
+    window(io)?; // Writing moved the address counters.
+    plane(io, 0x24, new)?;
+    io.send_command(0x22)?;
+    io.send_data(&[0xff])?; // Vendor partial mode.
+    io.send_command(0x20)?;
+    delay.delay_ms(10);
+    io.busy_wait(delay)
 }
 
 pub fn pattern() -> Frame {
@@ -83,65 +166,4 @@ pub fn pattern() -> Frame {
         .into_boxed_slice()
         .try_into()
         .unwrap_or_else(|_| unreachable!())
-}
-
-/// Spike only (throwaway): Waveshare `EPD_3in97_Display_Partial` sequence.
-/// `window` is `(x0, x1, y0, y1)` in frame pixels, x multiples of 8, exclusive ends.
-/// `variant` bit 0 also writes `old` to RAM 0x26. The caller owns the hardware reset.
-pub fn show_partial_experiment<I: DisplayInterface, D: DelayNs>(
-    io: &mut I,
-    old: &[u8; 48_000],
-    new: &[u8; 48_000],
-    window: (u16, u16, u16, u16),
-    variant: u8,
-    delay: &mut D,
-) -> Result<(), I::Error> {
-    let (x0, x1, y0, y1) = window;
-    // The full draw mirrors x (byte order and bits) and keeps y, so RAM x is 800 - frame x.
-    let (xs, xe) = ((800 - x1) / 8, (800 - x0) / 8);
-    let ram = |frame: &[u8; 48_000]| {
-        let mut bytes = Vec::with_capacity(usize::from((xe - xs) * (y1 - y0)));
-        for y in y0..y1 {
-            for column in (x0 / 8..x1 / 8).rev() {
-                bytes.push(frame[usize::from(y) * 100 + usize::from(column)].reverse_bits());
-            }
-        }
-        bytes
-    };
-    let set_window = |io: &mut I| -> Result<(), I::Error> {
-        let (xs_px, xe_px) = (xs * 8, (xe - 1) * 8);
-        for (command, data) in [
-            (0x11, &[0x03][..]), // X and Y increment, as after the vendor's reset.
-            (0x44, &[xs_px as u8, (xs_px >> 8) as u8, xe_px as u8, (xe_px >> 8) as u8][..]),
-            (0x45, &[y0 as u8, (y0 >> 8) as u8, (y1 - 1) as u8, ((y1 - 1) >> 8) as u8]),
-            (0x4e, &[xs_px as u8, (xs_px >> 8) as u8]),
-            (0x4f, &[y0 as u8, (y0 >> 8) as u8]),
-        ] {
-            io.send_command(command)?;
-            io.send_data(data)?;
-        }
-        Ok(())
-    };
-    io.busy_wait(delay)?;
-    for (command, data) in [(0x18, 0x80), (0x3c, 0x80)] {
-        io.send_command(command)?;
-        io.send_data(&[data])?;
-    }
-    if variant & 1 != 0 {
-        set_window(io)?;
-        io.send_command(0x26)?;
-        for row in ram(old).chunks(100) {
-            io.send_data(row)?;
-        }
-    }
-    set_window(io)?;
-    io.send_command(0x24)?;
-    for row in ram(new).chunks(100) {
-        io.send_data(row)?;
-    }
-    io.send_command(0x22)?;
-    io.send_data(&[0xff])?; // Vendor partial display mode.
-    io.send_command(0x20)?;
-    delay.delay_ms(10);
-    io.busy_wait(delay)
 }

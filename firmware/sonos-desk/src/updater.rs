@@ -24,13 +24,13 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>) {
                     println!("Display: frame unchanged; skipping refresh");
                     return Ok(());
                 };
-                let mut frame =
+                let frame =
                     frame::decode_png(&bytes).map_err(|message| anyhow::anyhow!("{message}"))?;
                 drop(bytes);
                 if ready.load(Ordering::Acquire) == 0 {
                     anyhow::bail!("Connection unavailable; keeping previous image");
                 }
-                if let Err(error) = panel.draw(&mut frame) {
+                if let Err(error) = panel.draw(&frame) {
                     println!("Display: panel failed: {error}; refresh disabled until reset");
                     // Hold PWR low and leave controls running after a panel/SPI fault.
                     loop {

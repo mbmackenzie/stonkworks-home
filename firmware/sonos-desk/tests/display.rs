@@ -1,7 +1,7 @@
 #![cfg(feature = "display-check")]
 
 use embedded_hal::delay::DelayNs;
-use sonos_desk_firmware::panel::show_pattern;
+use sonos_desk_firmware::panel::{Region, pattern, show_frame, show_partial, show_pattern};
 use ssd1677::DisplayInterface;
 
 #[derive(Default)]
@@ -184,12 +184,117 @@ fn changed_region_bounds_differences() {
     new[3 * 100 + 2] = 0x7f; // Pixel (17, 3) lies in byte column 2.
     assert_eq!(
         changed_region(&old, &new),
-        Some(Region { x0: 16, x1: 24, y0: 3, y1: 4 })
+        Some(Region {
+            x0: 16,
+            x1: 24,
+            y0: 3,
+            y1: 4
+        })
     );
     new[0] = 0x00;
     new[47_999] = 0x00;
     assert_eq!(
         changed_region(&old, &new),
-        Some(Region { x0: 0, x1: 800, y0: 0, y1: 480 })
+        Some(Region {
+            x0: 0,
+            x1: 800,
+            y0: 0,
+            y1: 480
+        })
     );
+}
+
+fn ram_stream(frame: &[u8; 48_000]) -> Vec<u8> {
+    let mut wire = Wire::default();
+    show_frame(&mut wire, frame, &mut Delay).unwrap();
+    wire.packets.into_iter().find(|p| p.0 == 0x24).unwrap().1
+}
+
+#[test]
+fn full_refresh_does_not_modify_the_frame() {
+    let frame = pattern();
+    let copy = frame.clone();
+    show_frame(&mut Wire::default(), &frame, &mut Delay).unwrap();
+    assert_eq!(frame, copy);
+}
+
+#[test]
+fn partial_window_matches_full_ram_image() {
+    let old = pattern();
+    let mut new = old.clone();
+    new[421 * 100 + 60..421 * 100 + 70].fill(0x00);
+    let (old_ram, new_ram) = (ram_stream(&old), ram_stream(&new));
+    let region = Region {
+        x0: 408,
+        x1: 776,
+        y0: 421,
+        y1: 437,
+    };
+    let mut wire = Wire::default();
+    show_partial(&mut wire, &old, &new, region, &mut Delay).unwrap();
+    // RAM x is mirrored (800 - x) and RAM y equals frame y; the full stream is sent from RAM y 479 down.
+    let window = |ram: &[u8]| -> Vec<u8> {
+        (421..437)
+            .flat_map(|y| (3..49).map(move |xb| (y, xb)))
+            .map(|(y, xb)| ram[(479 - y) * 100 + xb])
+            .collect()
+    };
+    let data = |command| {
+        wire.packets
+            .iter()
+            .find(|p| p.0 == command)
+            .unwrap()
+            .1
+            .clone()
+    };
+    assert_eq!(data(0x26), window(&old_ram));
+    assert_eq!(data(0x24), window(&new_ram));
+    assert_eq!(wire.packets.last().map(|p| p.0), Some(0x20));
+    assert_eq!(wire.packets[wire.packets.len() - 2].1, [0xff]); // Vendor partial mode.
+    assert!(!wire.packets.iter().any(|p| p.0 == 0x10)); // Panel stays awake.
+
+    // One pixel byte at (16..24, 3): RAM x byte 97, so pixel 776 = 0x308.
+    let mut wire = Wire::default();
+    let tiny = Region {
+        x0: 16,
+        x1: 24,
+        y0: 3,
+        y1: 4,
+    };
+    show_partial(&mut wire, &old, &new, tiny, &mut Delay).unwrap();
+    let data = |command| {
+        wire.packets
+            .iter()
+            .find(|p| p.0 == command)
+            .unwrap()
+            .1
+            .clone()
+    };
+    assert_eq!(data(0x44), [0x08, 0x03, 0x08, 0x03]);
+    assert_eq!(data(0x45), [3, 0, 3, 0]);
+    assert_eq!(data(0x4e), [0x08, 0x03]);
+    assert_eq!(data(0x4f), [3, 0]);
+}
+
+#[test]
+fn partial_stops_on_busy_timeout() {
+    let (old, new) = (pattern(), pattern());
+    let region = Region {
+        x0: 0,
+        x1: 8,
+        y0: 0,
+        y1: 1,
+    };
+    for fail_wait in [1, 2] {
+        let mut wire = Wire {
+            fail_wait: Some(fail_wait),
+            ..Default::default()
+        };
+        assert_eq!(
+            show_partial(&mut wire, &old, &new, region, &mut Delay),
+            Err("BUSY timeout")
+        );
+        assert_eq!(wire.packets.is_empty(), fail_wait == 1);
+        assert!(!wire.packets.iter().any(|p| p.0 == 0x10));
+    }
 }

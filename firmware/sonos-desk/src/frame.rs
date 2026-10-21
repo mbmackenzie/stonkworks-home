@@ -69,14 +69,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
         .map_err(|_| "Invalid framebuffer size")
 }
 
-/// Pixel box in frame orientation; x values are multiples of 8, ends are exclusive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Region {
-    pub x0: u16,
-    pub x1: u16,
-    pub y0: u16,
-    pub y1: u16,
-}
+pub use crate::panel::Region;
 
 /// Smallest byte-aligned box covering every differing byte, or `None` if identical.
 pub fn changed_region(old: &[u8; 48_000], new: &[u8; 48_000]) -> Option<Region> {
