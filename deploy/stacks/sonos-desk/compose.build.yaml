@@ -1,0 +1,7 @@
+# Local source build; use together with compose.yaml.
+services:
+  sonos-desk:
+    image: stonkworks/sonos-desk:local
+    build:
+      context: ../../..
+      dockerfile: services/sonos-desk/Dockerfile

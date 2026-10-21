@@ -1,9 +1,6 @@
 services:
   sonos-desk:
-    image: stonkworks/sonos-desk:local
-    build:
-      context: ../../..
-      dockerfile: services/sonos-desk/Dockerfile
+    image: "${SONOS_DESK_IMAGE:-ghcr.io/mbmackenzie/sonos-desk:main}"
     restart: unless-stopped
     network_mode: host
     environment:

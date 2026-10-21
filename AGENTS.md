@@ -21,7 +21,7 @@ changes and command results trigger frame fetches, changed regions are partially
 refreshed, and idle cleanup, a 24-hour backstop and a Mute hold do full refreshes,
 while MQTT controls continue.
 Home management, device configuration contracts, device onboarding,
-registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
+versioned registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 
 Scope comes from the “Clarify Stonkworks Home Scope” conversation
 (`01a14624-ab48-78e1-ade3-d3f2892a6573`) and its proposal. On the reference host,
@@ -133,6 +133,10 @@ Keep credentials, actual device assignments, and household-specific addresses
 out of shared source and examples. Use configurable inputs and documentation
 addresses. Do not copy household app data or deployment secrets into this repo.
 
-No registry release or firmware is published, and no open-source license has
-been selected or granted yet. Publication, licensing, and live deployment are
-separate work; initialization does not authorize them.
+GitHub Actions checks and builds Sonos Desk on pull requests and publishes
+`main` and commit-tagged amd64/arm64 images to GHCR after successful checks on
+`main`. The portable Compose example pulls that image by default; use
+`SONOS_DESK_IMAGE` to pin a digest and `compose.build.yaml` for local source builds.
+No versioned registry release or firmware release has been made, and no
+open-source license has been selected or granted yet. Public distribution,
+licensing, and live deployment remain separate work.
