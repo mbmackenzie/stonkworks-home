@@ -110,3 +110,25 @@ occurs and is unobtrusive; MQTT controls remain responsive throughout.
 
 `firmware/sonos-desk/README.md` (the "separate panel experiment" and
 three-minute statements) and the `AGENTS.md` firmware summary.
+
+## Decisions added during planning
+
+These come from reading the code and `docs/sonos-desk.md`. They refine the
+design above and need the user's confirmation.
+
+- **Triggers include command results.** The service polls rooms about every
+  three seconds, so a state message can lag a dial turn. A completed command
+  result already carries the new room state, so a result also wakes the
+  display worker. A state message wakes it only when title, artist, album,
+  artwork URL, `playback_state`, volume or mute changed.
+- **One settle re-fetch.** The service caches state for one second and can
+  return `TRANSITIONING`, so after each partial update the worker fetches once
+  more about 2.5 seconds later. A 304 makes that free.
+- **Forced-refresh gesture: hold Mute for 2 seconds.** Buttons currently act
+  on press, so holding Mute would toggle it. Mute therefore acts on release
+  when held under 2 seconds, and a longer hold requests a full refresh and
+  does not toggle mute. Other buttons are unchanged.
+- **Cross-thread signalling uses three `AtomicU32` counters** (changed,
+  activity, force); the C6 has no 64-bit atomics.
+- **The ETag no longer expires at 24 hours.** The 24-hour backstop redraws the
+  cached frame instead, per the scheduling contract above.
