@@ -61,11 +61,20 @@ Add a partial-update function beside `show_frame`:
 - Keep the last displayed 48,000-byte frame alongside the ETag.
 - An MQTT state change (track, `playback_state`, volume, mute) wakes the
   worker. Changes coalesce: one update in flight, latest state wins.
-- Fetch `/frame` with `If-None-Match`. A 304 or an identical frame does
-  nothing. Otherwise diff, compute the bounding box, partially refresh it, and
-  store the frame and ETag only after the refresh succeeds.
+- Fetch `/frame` with `If-None-Match`. Unless a full refresh is due (below), a
+  304 or an identical frame does nothing. Otherwise diff, compute the bounding
+  box, partially refresh it, and store the frame and ETag only after the
+  refresh succeeds.
+- Track `last_full_refresh` separately from the time of the last displayed
+  frame. Partial updates never advance it; only a successful full refresh does.
 - Idle cleanup: after about 60 seconds without input or state changes, if any
-  partials have accumulated, do one full refresh and sleep the panel.
+  partials have accumulated since `last_full_refresh`, do one full refresh of
+  the cached displayed frame and sleep the panel.
+- 24 hour backstop: when `last_full_refresh` is older than 24 hours, a full
+  refresh is due even if the fetch returns 304 or an identical frame, and the
+  refresh redraws the cached frame. If the user is actively interacting when
+  it falls due, it waits for the idle window, so it never flashes mid-use.
+  Sustained partial updates cannot postpone it past the next idle window.
 - Long-press (gesture to be chosen against `inputs.rs`) forces a full refresh.
 - Failure behavior is unchanged: fetch or decode errors keep the old frame;
   panel or SPI failure disables display updates until reset; controls and
@@ -79,6 +88,9 @@ Host tests, using the existing fake interface and timing helpers:
 - Diff and bounding-box math, including byte alignment and no-change.
 - Partial command sequence: window, both-plane writes, order, BUSY failures.
 - Scheduler: coalescing, idle cleanup timing, forced refresh, 304 handling.
+- Cleanup deadline: unchanged-frame expiry (304 or identical frame still
+  triggers the due full refresh), sustained partial updates not advancing
+  `last_full_refresh`, and a due refresh deferred until idle.
 - Gesture decoding for the forced refresh.
 
 Hardware acceptance: dial turn updates the volume bar; next track updates art
