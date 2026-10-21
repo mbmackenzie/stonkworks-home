@@ -7,7 +7,7 @@ mod wifi;
 
 #[cfg(target_os = "espidf")]
 fn main() -> anyhow::Result<()> {
-    use sonos_desk_firmware::{config::Config, frame};
+    use sonos_desk_firmware::config::Config;
     esp_idf_svc::sys::link_patches();
     let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take()?;
     std::thread::Builder::new()
@@ -19,23 +19,18 @@ fn main() -> anyhow::Result<()> {
                     Config::parse(include_str!(concat!(env!("OUT_DIR"), "/config.local.toml")))
                         .map_err(|message| anyhow::anyhow!("{message}"))?;
                 let mut frame = sonos_desk_firmware::panel::pattern(); // Reused as the receive buffer.
-                let png = {
+                {
                     let mut wifi = wifi::start(peripherals.modem, &config.wifi)?;
                     wifi.connect()?;
                     wifi.wait_netif_up()?;
                     let response = frame_http::fetch_connected(&config, None, &mut frame)?;
                     drop(response.etag);
-                    match response.body {
-                        frame_http::Body::Bitmap => None,
-                        frame_http::Body::Png(bytes) => Some(bytes),
-                        frame_http::Body::Unchanged => anyhow::bail!("Unexpected HTTP 304"),
-                    }
-                }; // Close Wi-Fi before decoding the diagnostic frame.
-                if let Some(bytes) = png {
-                    frame::decode_png_into(&bytes, &mut frame)
-                        .map_err(|message| anyhow::anyhow!("{message}"))?;
-                }
-                println!("Frame: validated 800x480 mono frame; ready for display");
+                    anyhow::ensure!(
+                        matches!(response.body, frame_http::Body::Bitmap),
+                        "Unexpected HTTP 304"
+                    );
+                } // Close Wi-Fi before drawing the diagnostic frame.
+                println!("Frame: received 800x480 mono frame; ready for display");
                 Ok(frame)
             });
             if let Err(error) = result {

@@ -80,6 +80,22 @@ pub fn decode_png_into(bytes: &[u8], frame: &mut [u8; 48_000]) -> Result<(), &'s
 
 pub use crate::link::{DisplayLink, Signals};
 
+/// Accept only the packed bitmap. An older service that ignores `format=bitmap` answers
+/// with a PNG; decoding one beside two frame buffers can exhaust the heap and abort the
+/// whole device, so it is refused with a recoverable error instead.
+pub fn check_frame_content_type(content_type: Option<&str>) -> Result<(), &'static str> {
+    let kind = content_type
+        .and_then(|value| value.split(';').next())
+        .map(|value| value.trim().to_ascii_lowercase());
+    match kind.as_deref() {
+        Some("application/octet-stream") => Ok(()),
+        Some("image/png") => {
+            Err("Service sent a PNG; update Sonos Desk to a version with format=bitmap")
+        }
+        _ => Err("Frame response is not a bitmap"),
+    }
+}
+
 #[derive(Debug)]
 pub enum BitmapError<E> {
     Read(E),

@@ -477,9 +477,11 @@ reads the 48,000 packed bytes straight into one of its two long-lived frame buff
 PNG bytes and no decoder. This matters because the PNG decoder alone peaked at about
 82 KB on top of the PNG itself (measured on a noisy 34 KB frame), which does not fit
 beside two 48 KB frames on this chip; playlist artwork (20 to 30 KB PNGs) crashed the
-controller with `memory allocation of 32768 bytes failed`. A service that predates
-`format=bitmap` answers with a PNG, which the worker still decodes, with that memory
-risk. Deploy the updated service for reliable operation with rich artwork.
+controller with `memory allocation of 32768 bytes failed`. The controller therefore
+**refuses PNG responses**: a service that predates `format=bitmap` ignores the parameter and
+answers with a PNG, which is rejected with `Service sent a PNG; update Sonos Desk to a
+version with format=bitmap` (logged as `Display: update failed`). The previous image stays and
+the controls keep working, retrying every 3 minutes. Redeploy the service to restore updates.
 
 **How it draws.** The first frame is a full refresh. After that, the worker
 compares each fetched frame with the cached one (`changed_region`) and partially

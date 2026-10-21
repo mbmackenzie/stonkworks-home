@@ -4,7 +4,7 @@ use crate::{
 };
 use sonos_desk_firmware::{
     config::Config,
-    frame::{self, Action, Schedule, changed_region},
+    frame::{Action, Schedule, changed_region},
     link::DisplayLink,
     panel::Frame,
 };
@@ -77,10 +77,6 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                             return Ok(None);
                         }
                         Body::Bitmap => {}
-                        Body::Png(bytes) => {
-                            frame::decode_png_into(&bytes, &mut next)
-                                .map_err(|message| anyhow::anyhow!("{message}"))?;
-                        }
                     }
                     if ready.load(Ordering::Acquire) == 0 {
                         anyhow::bail!("Connection unavailable; keeping previous image");

@@ -4,7 +4,7 @@ use esp_idf_svc::http::{
 };
 use sonos_desk_firmware::{
     config::Config,
-    frame::{BitmapError, MAX_PNG_BYTES, fill_bitmap},
+    frame::{BitmapError, check_frame_content_type, fill_bitmap},
 };
 use std::time::{Duration, Instant};
 
@@ -13,8 +13,6 @@ pub enum Body {
     Unchanged,
     /// The packed frame was read straight into the caller's buffer.
     Bitmap,
-    /// An older service sent a PNG instead; decode it.
-    Png(Vec<u8>),
 }
 
 pub struct Response {
@@ -47,7 +45,7 @@ pub fn fetch_connected(
         buffer_size: Some(1024),
         ..Default::default()
     })?;
-    let mut headers = vec![("Accept", "image/png")];
+    let mut headers = vec![("Accept", "application/octet-stream")];
     if let Some(tag) = etag {
         headers.push(("If-None-Match", tag));
     }
@@ -71,72 +69,32 @@ pub fn fetch_connected(
         "Frame service returned HTTP {}",
         http.status()
     );
-    let content_type = http
-        .header("Content-Type")
-        .and_then(|h| h.split(';').next())
-        .map(|h| h.trim().to_ascii_lowercase());
-    let is_bitmap = content_type.as_deref() == Some("application/octet-stream");
-    anyhow::ensure!(
-        is_bitmap || content_type.as_deref() == Some("image/png"),
-        "Frame response is neither a bitmap nor a PNG"
-    );
+    check_frame_content_type(http.header("Content-Type"))
+        .map_err(|message| anyhow::anyhow!("{message}"))?;
     let length = http
         .header("Content-Length")
         .map(|n| n.parse::<usize>())
         .transpose()
         .map_err(|_| anyhow::anyhow!("Invalid frame length"))?;
     anyhow::ensure!(
-        length.is_none_or(|n| n > 0 && n <= MAX_PNG_BYTES),
-        "Frame response exceeds limit"
+        length.is_none_or(|n| n == bitmap.len()),
+        "Bitmap response is not one frame"
     );
     let deadline = Instant::now() + Duration::from_secs(20);
-    if is_bitmap {
-        anyhow::ensure!(
-            length.is_none_or(|n| n == bitmap.len()),
-            "Bitmap response is not one frame"
-        );
-        fill_bitmap(
-            |buffer| {
-                anyhow::ensure!(Instant::now() < deadline, "Frame download timed out");
-                Ok(http.read(buffer)?)
-            },
-            bitmap,
-        )
-        .map_err(|error| match error {
-            BitmapError::Read(error) => error,
-            BitmapError::Size(message) => anyhow::anyhow!("{message}"),
-        })?;
-        println!("HTTP: received a {} byte bitmap", bitmap.len());
-        return Ok(Response {
-            body: Body::Bitmap,
-            etag: response_etag,
-        });
-    }
-    let mut bytes = Vec::new();
-    bytes
-        .try_reserve_exact(length.unwrap_or(MAX_PNG_BYTES))
-        .map_err(|_| anyhow::anyhow!("Not enough memory for frame response"))?;
-    let mut chunk = [0_u8; 2048];
-    loop {
-        anyhow::ensure!(Instant::now() < deadline, "Frame download timed out");
-        let count = http.read(&mut chunk)?;
-        if count == 0 {
-            break;
-        }
-        anyhow::ensure!(
-            bytes.len() + count <= MAX_PNG_BYTES && length.is_none_or(|n| bytes.len() + count <= n),
-            "Frame response exceeds limit"
-        );
-        bytes.extend_from_slice(&chunk[..count]);
-    }
-    anyhow::ensure!(
-        length.is_none_or(|n| n == bytes.len()),
-        "Truncated frame response"
-    );
-    bytes.shrink_to_fit();
-    println!("HTTP: received {} PNG bytes", bytes.len());
+    fill_bitmap(
+        |buffer| {
+            anyhow::ensure!(Instant::now() < deadline, "Frame download timed out");
+            Ok(http.read(buffer)?)
+        },
+        bitmap,
+    )
+    .map_err(|error| match error {
+        BitmapError::Read(error) => error,
+        BitmapError::Size(message) => anyhow::anyhow!("{message}"),
+    })?;
+    println!("HTTP: received a {} byte bitmap", bitmap.len());
     Ok(Response {
-        body: Body::Png(bytes),
+        body: Body::Bitmap,
         etag: response_etag,
     })
 }

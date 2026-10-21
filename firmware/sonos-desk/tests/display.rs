@@ -513,3 +513,20 @@ fn partial_repeats_the_drive_before_syncing_the_planes() {
     );
     assert_eq!(wire.packets.iter().filter(|p| p.0 == 0x20).count(), 2); // Stops after pass two's wait.
 }
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn only_bitmap_responses_are_accepted() {
+    use sonos_desk_firmware::frame::check_frame_content_type;
+    for ok in [
+        "application/octet-stream",
+        "Application/Octet-Stream; charset=binary",
+    ] {
+        assert!(check_frame_content_type(Some(ok)).is_ok(), "{ok}");
+    }
+    // An older service ignores format=bitmap and sends a PNG the device cannot decode safely.
+    let png = check_frame_content_type(Some("image/png")).unwrap_err();
+    assert!(png.contains("update"), "{png}");
+    assert!(check_frame_content_type(Some("text/html")).is_err());
+    assert!(check_frame_content_type(None).is_err());
+}
