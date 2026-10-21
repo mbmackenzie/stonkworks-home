@@ -80,6 +80,48 @@ pub fn decode_png_into(bytes: &[u8], frame: &mut [u8; 48_000]) -> Result<(), &'s
 
 pub use crate::link::{DisplayLink, Signals};
 
+/// Separate boxes for separate clusters of change (for example the art and the text),
+/// so each can be driven in the way that suits it. Byte columns closer than three apart
+/// share a box. More than four boxes collapse into one bounding box: every refresh costs
+/// about half a second regardless of size.
+pub fn changed_regions(old: &[u8; 48_000], new: &[u8; 48_000]) -> Vec<Region> {
+    let mut rows: [Option<(u16, u16)>; 100] = [None; 100];
+    for (y, (old_row, new_row)) in old.chunks(100).zip(new.chunks(100)).enumerate() {
+        for (column, (a, b)) in old_row.iter().zip(new_row).enumerate() {
+            if a != b {
+                let y = y as u16;
+                rows[column] =
+                    Some(rows[column].map_or((y, y), |(low, high)| (low.min(y), high.max(y))));
+            }
+        }
+    }
+    let mut groups: Vec<(usize, usize, u16, u16)> = Vec::new();
+    for (column, span) in rows.iter().enumerate() {
+        let Some((low, high)) = *span else { continue };
+        match groups.last_mut() {
+            Some(group) if column - group.1 <= 3 => {
+                group.1 = column;
+                group.2 = group.2.min(low);
+                group.3 = group.3.max(high);
+            }
+            _ => groups.push((column, column, low, high)),
+        }
+    }
+    let region = |(first, last, low, high): (usize, usize, u16, u16)| Region {
+        x0: first as u16 * 8,
+        x1: (last as u16 + 1) * 8,
+        y0: low,
+        y1: high + 1,
+    };
+    if groups.len() > 4 {
+        let (first, last) = (groups[0].0, groups[groups.len() - 1].1);
+        let low = groups.iter().map(|g| g.2).min().unwrap_or(0);
+        let high = groups.iter().map(|g| g.3).max().unwrap_or(0);
+        return vec![region((first, last, low, high))];
+    }
+    groups.into_iter().map(region).collect()
+}
+
 /// Accept only the packed bitmap. An older service that ignores `format=bitmap` answers
 /// with a PNG; decoding one beside two frame buffers can exhaust the heap and abort the
 /// whole device, so it is refused with a recoverable error instead.

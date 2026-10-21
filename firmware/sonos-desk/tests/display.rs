@@ -1,7 +1,7 @@
 #![cfg(feature = "display-check")]
 
 use embedded_hal::delay::DelayNs;
-use sonos_desk_firmware::panel::{Region, pattern, show_frame, show_partial, show_pattern};
+use sonos_desk_firmware::panel::{Region, Style, pattern, show_frame, show_partial, show_pattern};
 use ssd1677::DisplayInterface;
 
 #[derive(Default)]
@@ -210,7 +210,7 @@ fn partial_window_matches_full_ram_image() {
         y1: 437,
     };
     let mut wire = Wire::default();
-    show_partial(&mut wire, &old, &new, region, 1, &mut Delay).unwrap();
+    show_partial(&mut wire, &old, &new, region, Style::Direct(1), &mut Delay).unwrap();
     // RAM x is mirrored (800 - x) and RAM y equals frame y; the full stream is sent from RAM y 479 down.
     let window = |ram: &[u8]| -> Vec<u8> {
         (421..437)
@@ -249,7 +249,7 @@ fn partial_window_matches_full_ram_image() {
         y0: 3,
         y1: 4,
     };
-    show_partial(&mut wire, &old, &new, tiny, 1, &mut Delay).unwrap();
+    show_partial(&mut wire, &old, &new, tiny, Style::Direct(1), &mut Delay).unwrap();
     let data = |command| {
         wire.packets
             .iter()
@@ -279,7 +279,7 @@ fn partial_stops_on_busy_timeout() {
             ..Default::default()
         };
         assert_eq!(
-            show_partial(&mut wire, &old, &new, region, 1, &mut Delay),
+            show_partial(&mut wire, &old, &new, region, Style::Direct(1), &mut Delay),
             Err("BUSY timeout")
         );
         assert_eq!(wire.packets.is_empty(), fail_wait == 1);
@@ -479,7 +479,7 @@ fn partial_repeats_the_drive_before_syncing_the_planes() {
         y1: 11,
     };
     let mut wire = Wire::default();
-    show_partial(&mut wire, &old, &new, region, 2, &mut Delay).unwrap();
+    show_partial(&mut wire, &old, &new, region, Style::Direct(2), &mut Delay).unwrap();
     let commands: Vec<u8> = wire.packets.iter().map(|p| p.0).collect();
     let triggers: Vec<usize> = (0..commands.len())
         .filter(|&i| commands[i] == 0x20)
@@ -508,7 +508,7 @@ fn partial_repeats_the_drive_before_syncing_the_planes() {
     };
     let mut wire = waits_fail;
     assert_eq!(
-        show_partial(&mut wire, &old, &new, region, 2, &mut Delay),
+        show_partial(&mut wire, &old, &new, region, Style::Direct(2), &mut Delay),
         Err("BUSY timeout")
     );
     assert_eq!(wire.packets.iter().filter(|p| p.0 == 0x20).count(), 2); // Stops after pass two's wait.
@@ -529,4 +529,101 @@ fn only_bitmap_responses_are_accepted() {
     assert!(png.contains("update"), "{png}");
     assert!(check_frame_content_type(Some("text/html")).is_err());
     assert!(check_frame_content_type(None).is_err());
+}
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn changed_regions_split_distant_clusters() {
+    use sonos_desk_firmware::frame::changed_regions;
+    let old = [0xff; 48_000];
+    assert!(changed_regions(&old, &old).is_empty());
+    let mut new = old;
+    new[10 * 100 + 5] = 0; // Art-like cluster on the left.
+    new[11 * 100 + 6] = 0;
+    new[200 * 100 + 60] = 0; // Text-like cluster on the right.
+    new[204 * 100 + 61] = 0;
+    assert_eq!(
+        changed_regions(&old, &new),
+        [
+            Region {
+                x0: 40,
+                x1: 56,
+                y0: 10,
+                y1: 12
+            },
+            Region {
+                x0: 480,
+                x1: 496,
+                y0: 200,
+                y1: 205
+            },
+        ]
+    );
+    // Two unchanged byte columns between clusters keep them together; three split them.
+    let mut near = old;
+    near[5] = 0;
+    near[8] = 0;
+    assert_eq!(changed_regions(&old, &near).len(), 1);
+    let mut apart = old;
+    apart[5] = 0;
+    apart[9] = 0;
+    assert_eq!(changed_regions(&old, &apart).len(), 2);
+    // Too many clusters collapse into one bounding box rather than many slow refreshes.
+    let mut many = old;
+    for column in [1, 10, 20, 30, 40] {
+        many[column] = 0;
+    }
+    assert_eq!(
+        changed_regions(&old, &many),
+        [Region {
+            x0: 8,
+            x1: 328,
+            y0: 0,
+            y1: 1
+        }]
+    );
+}
+
+#[test]
+fn erase_then_write_drives_white_first() {
+    let old = pattern();
+    let mut new = old.clone();
+    new[100 * 10..100 * 10 + 5].fill(0x00);
+    let region = Region {
+        x0: 0,
+        x1: 40,
+        y0: 10,
+        y1: 11,
+    };
+    let mut wire = Wire::default();
+    show_partial(
+        &mut wire,
+        &old,
+        &new,
+        region,
+        Style::EraseThenWrite,
+        &mut Delay,
+    )
+    .unwrap();
+    let triggers: Vec<usize> = (0..wire.packets.len())
+        .filter(|&i| wire.packets[i].0 == 0x20)
+        .collect();
+    assert_eq!(triggers.len(), 2);
+    let plane = |before: usize, command: u8| {
+        wire.packets[..before]
+            .iter()
+            .rev()
+            .find(|p| p.0 == command)
+            .unwrap()
+            .1
+            .clone()
+    };
+    assert_eq!(plane(triggers[0], 0x24), vec![0xff; 5]); // First refresh: new is all white.
+    assert_eq!(plane(triggers[1], 0x26), vec![0xff; 5]); // Second: old is all white,
+    assert_ne!(plane(triggers[1], 0x24), vec![0xff; 5]); // and new is the real content.
+    let synced = wire.packets[triggers[1]..]
+        .iter()
+        .filter(|p| p.0 == 0x26 || p.0 == 0x24)
+        .count();
+    assert_eq!(synced, 2); // Both planes end up holding the new window.
 }

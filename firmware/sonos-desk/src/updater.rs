@@ -4,9 +4,9 @@ use crate::{
 };
 use sonos_desk_firmware::{
     config::Config,
-    frame::{Action, Schedule, changed_region},
+    frame::{Action, Schedule, changed_regions},
     link::DisplayLink,
-    panel::Frame,
+    panel::{Frame, Region, Style},
 };
 use std::{
     sync::{
@@ -16,6 +16,30 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+/// Experiment: each forced refresh (hold Mute) restarts from a clean screen and switches
+/// to the next style, so they can be compared by eye. Text boxes and art are styled apart.
+const STYLES: [(&str, Style, Style); 3] = [
+    (
+        "A: two direct passes everywhere",
+        Style::Direct(2),
+        Style::Direct(2),
+    ),
+    (
+        "B: erase-then-write text, one pass art",
+        Style::EraseThenWrite,
+        Style::Direct(1),
+    ),
+    (
+        "C: three direct passes text, one pass art",
+        Style::Direct(3),
+        Style::Direct(1),
+    ),
+];
+
+fn is_art(region: Region) -> bool {
+    u32::from(region.x1 - region.x0) * u32::from(region.y1 - region.y0) > 30_000
+}
 
 fn heap(label: &str) {
     // SAFETY: Plain ESP-IDF getters with no preconditions.
@@ -41,6 +65,7 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
     let mut shown: Frame = blank();
     let mut next: Frame = blank();
     let mut have_shown = false;
+    let (mut style, mut last_force) = (0, 0);
     heap("at start");
     // Hold PWR low and leave controls running after a panel/SPI fault.
     let disable = |error: anyhow::Error| -> ! {
@@ -54,7 +79,13 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
         if ready.load(Ordering::Acquire) == 0 {
             continue;
         }
-        match schedule.update(link.snapshot(), now()) {
+        let signals = link.snapshot();
+        if signals.force != last_force {
+            last_force = signals.force;
+            style = (style + 1) % STYLES.len();
+            println!("Display: style {}", STYLES[style].0);
+        }
+        match schedule.update(signals, now()) {
             Action::Wait => {}
             Action::FullRefresh => {
                 // Redraw the cached frame to clear ghosting; no network involved.
@@ -91,17 +122,26 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                                 disable(error);
                             }
                             schedule.full_shown(etag, now());
-                        } else if let Some(region) = changed_region(&shown, &next) {
-                            println!(
-                                "Display: partial x {}..{} y {}..{} etag {:?}",
-                                region.x0, region.x1, region.y0, region.y1, etag
-                            );
-                            if let Err(error) = panel.draw_partial(&shown, &next, region) {
-                                disable(error);
-                            }
-                            schedule.partial_shown(etag, now());
                         } else {
-                            schedule.set_etag(etag);
+                            let regions = changed_regions(&shown, &next);
+                            if regions.is_empty() {
+                                schedule.set_etag(etag);
+                            } else {
+                                for region in regions {
+                                    let (_, text, art) = STYLES[style];
+                                    let style = if is_art(region) { art } else { text };
+                                    println!(
+                                        "Display: partial x {}..{} y {}..{} {style:?}",
+                                        region.x0, region.x1, region.y0, region.y1
+                                    );
+                                    if let Err(error) =
+                                        panel.draw_partial(&shown, &next, region, style)
+                                    {
+                                        disable(error);
+                                    }
+                                }
+                                schedule.partial_shown(etag, now());
+                            }
                         }
                         // The panel call succeeded, so the decoded frame is what it shows.
                         if !have_shown || next != shown {

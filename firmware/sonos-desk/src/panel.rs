@@ -108,11 +108,28 @@ fn set_window<I: DisplayInterface>(io: &mut I, region: Region) -> Result<(), I::
     Ok(())
 }
 
-/// Send `region` of `frame` to one RAM plane, window already set.
+/// What goes into a RAM plane's window.
+#[derive(Clone, Copy)]
+enum Plane<'a> {
+    Frame(&'a [u8; 48_000]),
+    White,
+}
+
+/// How a partial refresh drives its changed pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Style {
+    /// Drive old to new this many times; extra passes push thin strokes closer to full.
+    Direct(u8),
+    /// Drive the old content to white, then white to the new content: each phase moves
+    /// pixels in one direction only, which leaves less residue on text.
+    EraseThenWrite,
+}
+
+/// Send `region` of `plane` to one RAM plane, window already set.
 fn write_window<I: DisplayInterface>(
     io: &mut I,
     command: u8,
-    frame: &[u8; 48_000],
+    plane: Plane,
     region: Region,
 ) -> Result<(), I::Error> {
     let (xs, xe) = (
@@ -121,10 +138,32 @@ fn write_window<I: DisplayInterface>(
     );
     io.send_command(command)?;
     for y in region.y0..region.y1 {
-        // Stream row 479 - y holds frame row y; send only the window's bytes.
-        io.send_data(&ram_row(frame, 479 - usize::from(y))[xs..xe])?;
+        match plane {
+            // Stream row 479 - y holds frame row y; send only the window's bytes.
+            Plane::Frame(frame) => io.send_data(&ram_row(frame, 479 - usize::from(y))[xs..xe])?,
+            Plane::White => io.send_data(&[0xff; 100][..xe - xs])?,
+        }
     }
     Ok(())
+}
+
+/// One refresh: `old` into 0x26, `new` into 0x24, then trigger and wait.
+fn drive<I: DisplayInterface, D: DelayNs>(
+    io: &mut I,
+    old: Plane,
+    new: Plane,
+    region: Region,
+    delay: &mut D,
+) -> Result<(), I::Error> {
+    for (command, plane) in [(0x26, old), (0x24, new)] {
+        set_window(io, region)?; // Each write moves the address counters.
+        write_window(io, command, plane, region)?;
+    }
+    io.send_command(0x22)?;
+    io.send_data(&[0xff])?; // Vendor partial mode.
+    io.send_command(0x20)?;
+    delay.delay_ms(10);
+    io.busy_wait(delay)
 }
 
 /// Partial refresh of `region` using Waveshare's `EPD_3in97_Display_Partial` sequence.
@@ -134,15 +173,12 @@ fn write_window<I: DisplayInterface>(
 /// changed window leaves everything outside it with "old" in the plane that now counts
 /// as new, so the next partial would draw the previous window back (hardware experiment,
 /// 2026-10-21). Writing the new window into both planes afterwards keeps them equal.
-///
-/// A single short drive leaves visible residue on thin strokes such as text, so `passes`
-/// repeats the same old-to-new drive that many times before the planes are synced.
 pub fn show_partial<I: DisplayInterface, D: DelayNs>(
     io: &mut I,
     old: &[u8; 48_000],
     new: &[u8; 48_000],
     region: Region,
-    passes: u8,
+    style: Style,
     delay: &mut D,
 ) -> Result<(), I::Error> {
     io.busy_wait(delay)?;
@@ -150,20 +186,20 @@ pub fn show_partial<I: DisplayInterface, D: DelayNs>(
         io.send_command(command)?;
         io.send_data(&[data])?;
     }
-    for _ in 0..passes.max(1) {
-        for (command, frame) in [(0x26, old), (0x24, new)] {
-            set_window(io, region)?; // Each write moves the address counters.
-            write_window(io, command, frame, region)?;
+    match style {
+        Style::Direct(passes) => {
+            for _ in 0..passes.max(1) {
+                drive(io, Plane::Frame(old), Plane::Frame(new), region, delay)?;
+            }
         }
-        io.send_command(0x22)?;
-        io.send_data(&[0xff])?; // Vendor partial mode.
-        io.send_command(0x20)?;
-        delay.delay_ms(10);
-        io.busy_wait(delay)?;
+        Style::EraseThenWrite => {
+            drive(io, Plane::Frame(old), Plane::White, region, delay)?;
+            drive(io, Plane::White, Plane::Frame(new), region, delay)?;
+        }
     }
     for command in [0x26, 0x24] {
         set_window(io, region)?;
-        write_window(io, command, new, region)?;
+        write_window(io, command, Plane::Frame(new), region)?;
     }
     Ok(())
 }
