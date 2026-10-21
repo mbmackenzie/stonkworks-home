@@ -156,6 +156,7 @@ impl Panel {
 
     /// A full refresh; `fast` uses the shorter waveform that flashes fewer times.
     pub fn draw_with(&mut self, frame: &[u8; 48_000], fast: bool) -> anyhow::Result<()> {
+        let started = std::time::Instant::now();
         let result = (|| -> anyhow::Result<()> {
             self.power_up()?;
             self.reset_pulse()?;
@@ -165,7 +166,11 @@ impl Panel {
             println!("Display: drawing one frame; BUSY timeout 15 seconds per wait");
             panel::show_frame_with(&mut io, frame, fast, &mut FreeRtos)
                 .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-            println!("Display: refresh finished; sleep command sent");
+            println!(
+                "Display: {} refresh finished in {} ms; sleep command sent",
+                if fast { "fast" } else { "full" },
+                started.elapsed().as_millis()
+            );
             Ok(())
         })();
         if result.is_err() {
