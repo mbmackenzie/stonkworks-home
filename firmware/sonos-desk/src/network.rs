@@ -175,7 +175,7 @@ fn mqtt_session(
                                     .map_err(|_| anyhow::anyhow!("Invalid MQTT update"))?;
                             apply(
                                 controller,
-                                Event::Observation(observation),
+                                Event::Observation(Box::new(observation)),
                                 now(),
                                 &mut connection,
                                 &gate,

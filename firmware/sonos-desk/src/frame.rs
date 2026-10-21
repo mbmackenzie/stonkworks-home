@@ -83,7 +83,7 @@ pub fn changed_region(old: &[u8; 48_000], new: &[u8; 48_000]) -> Option<Region> 
             .filter(|(_, (a, b))| a != b)
             .map(|(column, _)| column as u16);
         if let Some(first) = differing.next() {
-            let last = differing.last().unwrap_or(first);
+            let last = differing.next_back().unwrap_or(first);
             let (x0, x1, y0, _) = bounds.unwrap_or((first, last, y as u16, 0));
             bounds = Some((x0.min(first), x1.max(last), y0, y as u16));
         }
@@ -174,6 +174,11 @@ impl Schedule {
             STARTUP_RETRY_MS
         };
         self.next_check = now_ms.saturating_add(wait);
+    }
+
+    /// The server sent identical pixels under a new ETag; remember it without drawing.
+    pub fn set_etag(&mut self, etag: Option<String>) {
+        self.etag = etag;
     }
 
     pub fn partial_shown(&mut self, etag: Option<String>, _now_ms: u64) {

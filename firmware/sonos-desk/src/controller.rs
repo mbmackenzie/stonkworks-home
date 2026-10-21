@@ -17,7 +17,7 @@ pub enum Event {
     Tick,
     Disconnected,
     Subscribed,
-    Observation(Observation),
+    Observation(Box<Observation>),
     PublishFailed(Uuid),
 }
 pub enum Effect {
@@ -144,7 +144,7 @@ impl Controller {
         }
         let input = match event {
             Event::Observation(observation) => {
-                self.observe(observation, now, &mut effects);
+                self.observe(*observation, now, &mut effects);
                 None
             }
             Event::Input(input) => Some(input),

@@ -403,9 +403,8 @@ control tests remain unchanged.
 Hardware run (2026-10-21): image flashed, booted, and reported completed refresh,
 sleep, and power-off without timeout. The user saw the complete pattern rotated
 180°; byte/bit reversal corrects that mounting orientation. The correction was
-rebuilt and reflashed, and the user confirmed the corrected orientation. Live frames, grayscale,
-partial updates, and simultaneous display
-refresh with MQTT controls are not implemented in this chunk.
+rebuilt and reflashed, and the user confirmed the corrected orientation. This
+diagnostic is one-shot; the controller adds live partial updates alongside MQTT controls.
 
 To restore physical Sonos controls, close the monitor, then run
 `just firmware-flash controller`. With `http_base_url` configured, that image also
@@ -444,45 +443,62 @@ on the C6 and exhausted its heap. The replacement uses bounded row buffers.
 One focused decoder test checks packing, malformed input, format rejection,
 and a 64 KiB maximum individual allocation for its fixture. All nine host
 tests pass; that allocation guard does not measure total device memory use.
-This diagnostic remains one-shot. The controller adds periodic refresh below;
-grayscale and partial updates remain separate work.
+This diagnostic remains one-shot. The controller adds live partial updates below;
+grayscale remains separate work.
 
 Hardware run (2026-10-21): the C6 fetched a 9,640-byte real Sonos frame,
 disconnected Wi-Fi, validated the PNG, and reported completed refresh, panel
 sleep, and power-off without timeout or allocation failure. The user confirmed the Sonos artwork and text are upright and complete. That run used the frame-check image.
 
 
-## Controls with periodic display updates
+## Controls with live display updates
 
 Build and flash `controller` using the existing justfile commands. Set the
 optional `http_base_url` and existing `room_id` in local configuration to enable
 the display. Omitting the HTTP origin keeps the panel off and controls available.
 The diagnostic images retain their previous roles.
 
-The display worker waits for fresh MQTT controller readiness before its first
-fetch, then checks three minutes after each completed attempt. It shares the
+The display worker waits for fresh MQTT controller readiness. It shares the
 network worker's Wi-Fi connection and never starts or stops Wi-Fi. HTTP, PNG
 row decoding, SPI transfer and BUSY waits run separately from MQTT/input handling.
 Only the display task owns the display pins; the input loop owns the controls.
 
-`If-None-Match` carries the ETag of the last successfully displayed frame.
-HTTP 304 skips decoding and panel power-up. Fetch/decode failures retain that
-ETag and the old image, then wait for the next interval. A new ETag is saved
-only after refresh and power-off succeed. A full fetch/refresh is forced after
-24 hours even if the image is unchanged. Each refresh sleeps and powers off
-the panel. Panel/SPI failure disables display updates until reset, leaving
-controls running. No image queue or automatic replay of Sonos commands is added.
+**What wakes it.** The MQTT thread wakes the worker when the room's visible state
+changes (title, artist, album, artwork URL, `playback_state`, volume or mute) and
+when a command result completes; results carry the new state sooner than the
+service's roughly three-second polling. Bursts, such as spinning the dial, coalesce
+into one fetch 150 ms after the first change. Each such fetch is followed by one
+settle fetch 2.5 seconds later, because the service caches state for a second and
+can briefly report `TRANSITIONING`. A 180-second poll remains as a fallback; a
+failed fetch before the first frame retries after 10 seconds.
 
-The three-minute spacing follows the
-[panel manual](https://www.waveshare.com/wiki/3.97inch_e-Paper_HAT%2B_Manual)'s
-recommendation for full refresh. This is a slow now-playing display: track, volume, and playback changes
-can take up to a polling interval to appear. Physical commands still run through
-the existing MQTT path. Faster partial updates require a separate panel experiment.
+**How it draws.** The first frame is a full refresh. After that, the worker
+compares each fetched frame with the cached one (`changed_region`) and partially
+refreshes only the byte-aligned box that changed, using Waveshare's partial
+sequence on both RAM planes (`show_partial`). Identical frames and HTTP 304
+responses cost no panel traffic. The cached frame is replaced only after the panel
+call succeeds. A partial takes about 0.5 to 0.85 seconds on this panel (see the
+spike findings in the design spec). PWR stays high between partials.
 
-The ten host tests include one focused timing/cache scenario in addition to the
-existing input, command, panel and PNG tests.
+**Ghosting cleanup.** Full, flashing refreshes never happen while you are using the
+controls. After 60 seconds without input or visible changes, if any partials were
+drawn since the last full refresh, the worker redraws the cached frame in full. A
+24-hour backstop does the same even when every fetch was a 304; sustained partials
+do not postpone it, and it waits for the same idle window. **Hold Mute for two
+seconds** to force a full refresh immediately. Because of this gesture, Mute now
+toggles on release (a hold under two seconds), not on press; the other buttons are
+unchanged. After a full refresh powers the panel off, the first partial reloads both
+RAM planes (about one extra second), since RAM retention without power is unverified.
 
-Hardware acceptance (2026-10-21): the combined controller reached MQTT readiness,
+`If-None-Match` carries the ETag of the last frame shown. Fetch/decode failures retain
+that ETag and the old image. Panel/SPI failure disables display updates until reset,
+leaving controls running. No image queue or automatic replay of Sonos commands is
+added. The worker logs free heap after each update.
+
+Hardware acceptance for live updates is recorded below once run. The earlier
+periodic-refresh build's acceptance follows for history.
+
+Hardware acceptance, periodic build (2026-10-21): the combined controller reached MQTT readiness,
 fetched and drew the first frame with Wi-Fi/MQTT still active, then fetched a
 changed frame and refreshed again after the three-minute interval. Both refreshes
 completed sleep/power-off without allocation failure or timeout. The user confirmed

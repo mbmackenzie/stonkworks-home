@@ -142,7 +142,7 @@ fn message(
         &controller.config,
     )
     .unwrap();
-    step(controller, Event::Observation(observation), ms)
+    step(controller, Event::Observation(Box::new(observation)), ms)
 }
 
 fn snapshots(controller: &mut Controller, ms: u64, stamp: &str, mute: bool) {

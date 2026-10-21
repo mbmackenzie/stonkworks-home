@@ -83,7 +83,7 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
                             std::thread::park();
                         }
                     }
-                    crate::updater::run(panel, config, gate);
+                    crate::updater::run(panel, config, gate, link);
                     Ok(())
                 })();
                 if result.is_err() {

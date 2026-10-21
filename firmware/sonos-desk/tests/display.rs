@@ -403,6 +403,8 @@ mod schedule {
         assert_eq!(s.etag(), Some("\"e\""));
         s.fetched(0, false); // A failed replacement keeps the displayed ETag.
         assert_eq!(s.etag(), Some("\"e\""));
+        s.set_etag(Some("\"new\"".into())); // Identical pixels under a new ETag.
+        assert_eq!(s.etag(), Some("\"new\""));
         assert_eq!(s.update(Signals::default(), 179_999), Action::Wait);
         assert_eq!(s.update(Signals::default(), 180_000), Action::Fetch);
     }

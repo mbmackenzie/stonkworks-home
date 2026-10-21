@@ -118,6 +118,7 @@ impl Panel {
     /// PWR stays high afterwards so later partials skip power-up; a full `draw` or any
     /// failure powers off. After a power-off both planes are reloaded with `old` first,
     /// because RAM retention without power is unverified.
+    #[allow(dead_code)] // The one-shot diagnostics share this file but only draw in full.
     pub fn draw_partial(
         &mut self,
         old: &[u8; 48_000],

@@ -16,8 +16,10 @@ The controller binary sends physical-input commands for one locally assigned
 room, with fresh-state readiness gates and no application retry/reconnect replay.
 A separate display-check binary draws one fixed e-ink pattern. The frame-check
 binary fetches and displays one monochrome Sonos HTTP frame per boot. The controller
-also checks frames every three minutes in a separate worker over the shared Wi-Fi
-connection, with ETags and panel sleep, while MQTT controls continue.
+updates the screen in a separate worker over the shared Wi-Fi connection: MQTT state
+changes and command results trigger frame fetches, changed regions are partially
+refreshed, and idle cleanup, a 24-hour backstop and a Mute hold do full refreshes,
+while MQTT controls continue.
 Home management, device configuration contracts, device onboarding,
 registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 
