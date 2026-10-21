@@ -173,3 +173,23 @@ fn refresh_waits_and_only_caches_displayed_frames() {
     assert_eq!(refresh.etag(86_579_999), Some("\"first\""));
     assert_eq!(refresh.etag(86_580_000), None); // Force a full refresh after a day.
 }
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn changed_region_bounds_differences() {
+    use sonos_desk_firmware::frame::{Region, changed_region};
+    let old = [0xff; 48_000];
+    let mut new = old;
+    assert_eq!(changed_region(&old, &new), None);
+    new[3 * 100 + 2] = 0x7f; // Pixel (17, 3) lies in byte column 2.
+    assert_eq!(
+        changed_region(&old, &new),
+        Some(Region { x0: 16, x1: 24, y0: 3, y1: 4 })
+    );
+    new[0] = 0x00;
+    new[47_999] = 0x00;
+    assert_eq!(
+        changed_region(&old, &new),
+        Some(Region { x0: 0, x1: 800, y0: 0, y1: 480 })
+    );
+}

@@ -69,6 +69,39 @@ pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
         .map_err(|_| "Invalid framebuffer size")
 }
 
+/// Pixel box in frame orientation; x values are multiples of 8, ends are exclusive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub x0: u16,
+    pub x1: u16,
+    pub y0: u16,
+    pub y1: u16,
+}
+
+/// Smallest byte-aligned box covering every differing byte, or `None` if identical.
+pub fn changed_region(old: &[u8; 48_000], new: &[u8; 48_000]) -> Option<Region> {
+    let mut bounds: Option<(u16, u16, u16, u16)> = None;
+    for (y, (old_row, new_row)) in old.chunks(100).zip(new.chunks(100)).enumerate() {
+        let mut differing = old_row
+            .iter()
+            .zip(new_row)
+            .enumerate()
+            .filter(|(_, (a, b))| a != b)
+            .map(|(column, _)| column as u16);
+        if let Some(first) = differing.next() {
+            let last = differing.last().unwrap_or(first);
+            let (x0, x1, y0, _) = bounds.unwrap_or((first, last, y as u16, 0));
+            bounds = Some((x0.min(first), x1.max(last), y0, y as u16));
+        }
+    }
+    bounds.map(|(x0, x1, y0, y1)| Region {
+        x0: x0 * 8,
+        x1: (x1 + 1) * 8,
+        y0,
+        y1: y1 + 1,
+    })
+}
+
 /// Cache only the ETag of an image actually shown on the panel.
 #[derive(Default)]
 pub struct Refresh {
