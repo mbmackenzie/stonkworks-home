@@ -101,6 +101,7 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                             if regions.is_empty() {
                                 schedule.set_etag(etag);
                             } else {
+                                let content = regions.iter().any(|region| region.is_content());
                                 for region in regions {
                                     println!(
                                         "Display: partial x {}..{} y {}..{}",
@@ -111,6 +112,9 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
                                     }
                                 }
                                 schedule.partial_shown(etag, now());
+                                if content {
+                                    schedule.content_changed(now());
+                                }
                             }
                         }
                         // The panel call succeeded, so the decoded frame is what it shows.

@@ -199,7 +199,8 @@ const DEBOUNCE_MS: u64 = 150;
 const SETTLE_MS: u64 = 2_500;
 const POLL_MS: u64 = 180_000;
 const STARTUP_RETRY_MS: u64 = 10_000;
-const IDLE_MS: u64 = 12_000;
+const IDLE_MS: u64 = 60_000;
+const CONTENT_CLEANUP_MS: u64 = 4_000;
 const BACKSTOP_MS: u64 = 86_400_000;
 
 /// Decide when to fetch a frame and when to clean ghosting with a full refresh.
@@ -214,6 +215,7 @@ pub struct Schedule {
     last_activity: u64,
     last_full: u64,
     partials: u32,
+    content_at: Option<u64>,
     etag: Option<String>,
 }
 
@@ -242,6 +244,14 @@ impl Schedule {
         }
         if now_ms >= self.next_check {
             return Action::Fetch;
+        }
+        // Art or text changed a few seconds ago: clean up soon, after the settle fetch.
+        if self.shown
+            && self
+                .content_at
+                .is_some_and(|at| now_ms.saturating_sub(at) >= CONTENT_CLEANUP_MS)
+        {
+            return Action::FullRefresh;
         }
         let idle = now_ms.saturating_sub(self.last_activity) >= IDLE_MS;
         if self.shown
@@ -273,6 +283,12 @@ impl Schedule {
         self.etag = etag;
     }
 
+    /// A partial just changed the art or the text, which leaves the most visible residue.
+    /// Presses and small changes (volume, labels) deliberately do not call this.
+    pub fn content_changed(&mut self, now_ms: u64) {
+        self.content_at = Some(now_ms);
+    }
+
     pub fn partial_shown(&mut self, etag: Option<String>, _now_ms: u64) {
         self.etag = etag;
         self.partials += 1;
@@ -283,5 +299,6 @@ impl Schedule {
         self.shown = true;
         self.last_full = now_ms;
         self.partials = 0;
+        self.content_at = None;
     }
 }

@@ -361,15 +361,15 @@ mod schedule {
     }
 
     #[test]
-    fn schedule_cleans_up_only_when_idle() {
+    fn schedule_cleans_up_small_changes_only_after_long_idle() {
         let mut s = shown(0);
         assert_eq!(drive(&mut s, signals(1, 0, 0), 1_000), Action::Wait);
         assert_eq!(drive(&mut s, signals(1, 0, 0), 1_150), Action::Wait);
         s.partial_shown(E(), 1_150);
         assert_eq!(drive(&mut s, signals(1, 1, 0), 30_000), Action::Wait); // Input resets idle.
-        assert_eq!(drive(&mut s, signals(1, 1, 0), 41_999), Action::Wait);
-        assert_eq!(drive(&mut s, signals(1, 1, 0), 42_000), Action::FullRefresh);
-        s.full_shown(E(), 42_000);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 89_999), Action::Wait);
+        assert_eq!(drive(&mut s, signals(1, 1, 0), 90_000), Action::FullRefresh);
+        s.full_shown(E(), 90_000);
         assert_eq!(drive(&mut s, signals(1, 1, 0), 200_000), Action::Wait);
         // No partials since the last full refresh: nothing to clean up.
         assert_eq!(drive(&mut s, signals(1, 1, 0), 10_000_000), Action::Wait);
@@ -382,19 +382,43 @@ mod schedule {
         s.partial_shown(E(), DAY / 2); // Partials never advance the full-refresh clock.
         assert_eq!(drive(&mut s, signals(0, 1, 0), DAY), Action::Wait); // Active: deferred.
         assert_eq!(
-            drive(&mut s, signals(0, 1, 0), DAY + 12_000),
+            drive(&mut s, signals(0, 1, 0), DAY + 60_000),
             Action::FullRefresh
         );
-        s.full_shown(E(), DAY + 12_000);
+        s.full_shown(E(), DAY + 60_000);
         // Every fetch is a 304 from here on; the backstop still redraws the cached frame.
         assert_eq!(
-            drive(&mut s, signals(0, 1, 0), 2 * DAY + 12_000 - 1),
+            drive(&mut s, signals(0, 1, 0), 2 * DAY + 60_000 - 1),
             Action::Wait
         );
         assert_eq!(
-            drive(&mut s, signals(0, 1, 0), 2 * DAY + 12_000),
+            drive(&mut s, signals(0, 1, 0), 2 * DAY + 60_000),
             Action::FullRefresh
         );
+    }
+
+    #[test]
+    fn schedule_cleans_up_shortly_after_a_content_change() {
+        let mut s = shown(0);
+        s.partial_shown(E(), 1_150);
+        s.content_changed(1_150); // The art or the text changed.
+        assert_eq!(drive(&mut s, signals(0, 0, 0), 4_000), Action::Wait);
+        // Another content change restarts the wait, so skipping tracks cleans up once at the end.
+        s.content_changed(4_000);
+        assert_eq!(drive(&mut s, signals(0, 0, 0), 7_999), Action::Wait);
+        assert_eq!(drive(&mut s, signals(0, 0, 0), 8_000), Action::FullRefresh);
+        s.full_shown(E(), 8_000);
+        assert_eq!(drive(&mut s, signals(0, 0, 0), 20_000), Action::Wait); // Nothing left to clean.
+    }
+
+    #[test]
+    fn schedule_ignores_presses_when_timing_a_content_cleanup() {
+        let mut s = shown(0);
+        s.partial_shown(E(), 1_000);
+        s.content_changed(1_000);
+        // Button presses are not what the cleanup waits for; the change is.
+        assert_eq!(drive(&mut s, signals(0, 5, 0), 4_999), Action::Wait);
+        assert_eq!(drive(&mut s, signals(0, 6, 0), 5_000), Action::FullRefresh);
     }
 
     #[test]
@@ -604,4 +628,43 @@ fn fast_full_refresh_uses_the_vendor_fast_waveform() {
         normal.packets.iter().find(|p| p.0 == 0x22).unwrap().1,
         [0xf7]
     );
+}
+
+#[test]
+fn only_art_and_text_sized_boxes_count_as_content() {
+    let art = Region {
+        x0: 24,
+        x1: 384,
+        y0: 76,
+        y1: 436,
+    };
+    let text_block = Region {
+        x0: 408,
+        x1: 736,
+        y0: 90,
+        y1: 292,
+    }; // Title, artist, album.
+    let label = Region {
+        x0: 696,
+        x1: 776,
+        y0: 22,
+        y1: 36,
+    };
+    let volume = Region {
+        x0: 408,
+        x1: 776,
+        y0: 394,
+        y1: 436,
+    }; // Label line and bar.
+    let title_only = Region {
+        x0: 408,
+        x1: 704,
+        y0: 90,
+        y1: 126,
+    };
+    assert!(art.is_content());
+    assert!(text_block.is_content());
+    assert!(!label.is_content());
+    assert!(!volume.is_content());
+    assert!(!title_only.is_content());
 }

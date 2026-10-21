@@ -21,6 +21,15 @@ pub struct Region {
     pub y1: u16,
 }
 
+impl Region {
+    /// Large enough to be the album art or the title/artist/album text (at least 60 pixels
+    /// tall and 10,000 pixels in area), not a volume bar, mute label or header word.
+    pub fn is_content(&self) -> bool {
+        let (width, height) = (u32::from(self.x1 - self.x0), u32::from(self.y1 - self.y0));
+        height >= 60 && width * height >= 10_000
+    }
+}
+
 /// One row of panel RAM, in the order sent. Calibrated to the user's mounting:
 /// 180° means reverse byte and bit order, so stream row `r` is frame row `479 - r`.
 fn ram_row(frame: &[u8; 48_000], row: usize) -> [u8; 100] {

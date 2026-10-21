@@ -505,12 +505,18 @@ the plane that now counts as new, and the next partial would draw the previous o
 back (found on hardware, 2026-10-21: each partial reverted its predecessor's box).
 `show_partial` therefore writes the new window into both planes after each refresh.
 
-**Ghosting cleanup.** Full, flashing refreshes never happen while you are using the
-controls. After 60 seconds without input or visible changes, if any partials were
-drawn since the last full refresh, the worker redraws the cached frame in full. A
-24-hour backstop does the same even when every fetch was a 304; sustained partials
-do not postpone it, and it waits for the same idle window. **Hold Mute for two
-seconds** to force a full refresh immediately. Because of this gesture, Mute now
+**Ghosting cleanup.** Residue is worst after the art or the title, artist and album text
+changes, so those trigger it, not button presses. When a partial changes a box at least
+60 pixels tall and 10,000 pixels in area (`Region::is_content`: the art or the text
+block, not the volume bar, mute text or header label), the worker waits four seconds,
+after the settle fetch, then redraws the cached frame with the panel's **fast** full
+waveform (`show_frame_with(.., fast = true)`: the vendor's `0x1a = 0x6a` and `0xd7`).
+That flashes about once, and on hardware (2026-10-21) cleared the residue well. Another
+content change within the four seconds restarts the wait, so skipping through tracks
+cleans up once, at the end. Small changes (volume, mute, labels) leave a little residue
+and are cleaned after 60 seconds of quiet. A 24-hour backstop does the same even when
+every fetch was a 304. **Hold Mute for two seconds** to force a refresh immediately with
+the slower, thorough waveform (about four flashes). Because of this gesture, Mute now
 toggles on release (a hold under two seconds), not on press; the other buttons are
 unchanged.
 
