@@ -18,19 +18,24 @@ fn main() -> anyhow::Result<()> {
                 let config =
                     Config::parse(include_str!(concat!(env!("OUT_DIR"), "/config.local.toml")))
                         .map_err(|message| anyhow::anyhow!("{message}"))?;
-                let bytes = {
+                let mut frame = sonos_desk_firmware::panel::pattern(); // Reused as the receive buffer.
+                let png = {
                     let mut wifi = wifi::start(peripherals.modem, &config.wifi)?;
                     wifi.connect()?;
                     wifi.wait_netif_up()?;
-                    let response = frame_http::fetch_connected(&config, None)?;
+                    let response = frame_http::fetch_connected(&config, None, &mut frame)?;
                     drop(response.etag);
-                    response
-                        .png
-                        .ok_or_else(|| anyhow::anyhow!("Unexpected HTTP 304"))?
+                    match response.body {
+                        frame_http::Body::Bitmap => None,
+                        frame_http::Body::Png(bytes) => Some(bytes),
+                        frame_http::Body::Unchanged => anyhow::bail!("Unexpected HTTP 304"),
+                    }
                 }; // Close Wi-Fi before decoding the diagnostic frame.
-                let frame =
-                    frame::decode_png(&bytes).map_err(|message| anyhow::anyhow!("{message}"))?;
-                println!("PNG: validated 800x480 mono frame; ready for display");
+                if let Some(bytes) = png {
+                    frame::decode_png_into(&bytes, &mut frame)
+                        .map_err(|message| anyhow::anyhow!("{message}"))?;
+                }
+                println!("Frame: validated 800x480 mono frame; ready for display");
                 Ok(frame)
             });
             if let Err(error) = result {

@@ -472,6 +472,15 @@ settle fetch 2.5 seconds later, because the service caches state for a second an
 can briefly report `TRANSITIONING`. A 180-second poll remains as a fallback; a
 failed fetch before the first frame retries after 10 seconds.
 
+**What it downloads.** The worker asks for `/frame?...&mode=mono&format=bitmap` and
+reads the 48,000 packed bytes straight into one of its two long-lived frame buffers: no
+PNG bytes and no decoder. This matters because the PNG decoder alone peaked at about
+82 KB on top of the PNG itself (measured on a noisy 34 KB frame), which does not fit
+beside two 48 KB frames on this chip; playlist artwork (20 to 30 KB PNGs) crashed the
+controller with `memory allocation of 32768 bytes failed`. A service that predates
+`format=bitmap` answers with a PNG, which the worker still decodes, with that memory
+risk. Deploy the updated service for reliable operation with rich artwork.
+
 **How it draws.** The first frame is a full refresh. After that, the worker
 compares each fetched frame with the cached one (`changed_region`) and partially
 refreshes only the byte-aligned box that changed, using Waveshare's partial

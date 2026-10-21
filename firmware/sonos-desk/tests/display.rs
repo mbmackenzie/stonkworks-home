@@ -441,3 +441,28 @@ fn frame_decoder_overwrites_a_reused_buffer() {
     assert_eq!(&reused, &*decode_png(&bytes).unwrap());
     assert!(decode_png_into(&bytes[..bytes.len() - 12], &mut reused).is_err());
 }
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn bitmap_body_must_be_exactly_one_frame() {
+    use sonos_desk_firmware::frame::fill_bitmap;
+    let source: Vec<u8> = (0..48_000_u32).map(|i| (i % 251) as u8).collect();
+    let chunked = |data: &[u8], size: usize| {
+        let mut rest = data.to_vec();
+        move |buffer: &mut [u8]| -> Result<usize, &'static str> {
+            let count = rest.len().min(size).min(buffer.len());
+            buffer[..count].copy_from_slice(&rest[..count]);
+            rest.drain(..count);
+            Ok(count)
+        }
+    };
+    let mut frame = [0_u8; 48_000];
+    assert!(fill_bitmap(chunked(&source, 1_000), &mut frame).is_ok());
+    assert_eq!(frame.as_slice(), source.as_slice());
+    assert!(fill_bitmap(chunked(&source[..47_999], 1_000), &mut frame).is_err()); // Truncated.
+    let mut long = source.clone();
+    long.push(0);
+    assert!(fill_bitmap(chunked(&long, 1_000), &mut frame).is_err()); // Trailing byte.
+    let failing = |_: &mut [u8]| -> Result<usize, &'static str> { Err("link down") };
+    assert!(fill_bitmap(failing, &mut frame).is_err());
+}

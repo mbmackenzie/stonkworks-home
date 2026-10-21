@@ -1,4 +1,7 @@
-use crate::{display::Panel, frame_http};
+use crate::{
+    display::Panel,
+    frame_http::{self, Body},
+};
 use sonos_desk_firmware::{
     config::Config,
     frame::{self, Action, Schedule, changed_region},
@@ -66,14 +69,19 @@ pub fn run(mut panel: Panel, config: Config, ready: Arc<AtomicU32>, link: Arc<Di
             }
             Action::Fetch => {
                 let result = (|| -> anyhow::Result<Option<Option<String>>> {
-                    let response = frame_http::fetch_connected(&config, schedule.etag())?;
-                    let Some(bytes) = response.png else {
-                        println!("Display: frame unchanged; skipping refresh");
-                        return Ok(None);
-                    };
-                    frame::decode_png_into(&bytes, &mut next)
-                        .map_err(|message| anyhow::anyhow!("{message}"))?;
-                    drop(bytes);
+                    let response =
+                        frame_http::fetch_connected(&config, schedule.etag(), &mut next)?;
+                    match response.body {
+                        Body::Unchanged => {
+                            println!("Display: frame unchanged; skipping refresh");
+                            return Ok(None);
+                        }
+                        Body::Bitmap => {}
+                        Body::Png(bytes) => {
+                            frame::decode_png_into(&bytes, &mut next)
+                                .map_err(|message| anyhow::anyhow!("{message}"))?;
+                        }
+                    }
                     if ready.load(Ordering::Acquire) == 0 {
                         anyhow::bail!("Connection unavailable; keeping previous image");
                     }

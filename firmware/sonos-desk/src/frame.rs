@@ -79,6 +79,31 @@ pub fn decode_png_into(bytes: &[u8], frame: &mut [u8; 48_000]) -> Result<(), &'s
 }
 
 pub use crate::link::{DisplayLink, Signals};
+
+#[derive(Debug)]
+pub enum BitmapError<E> {
+    Read(E),
+    Size(&'static str),
+}
+
+/// Fill `frame` from a `format=bitmap` response body, which must be exactly one
+/// packed frame: no PNG bytes and no decoder, so no memory beyond the frame itself.
+pub fn fill_bitmap<E>(
+    mut read: impl FnMut(&mut [u8]) -> Result<usize, E>,
+    frame: &mut [u8; 48_000],
+) -> Result<(), BitmapError<E>> {
+    let mut filled = 0;
+    while filled < frame.len() {
+        match read(&mut frame[filled..]).map_err(BitmapError::Read)? {
+            0 => return Err(BitmapError::Size("Truncated bitmap")),
+            count => filled += count,
+        }
+    }
+    if read(&mut [0]).map_err(BitmapError::Read)? != 0 {
+        return Err(BitmapError::Size("Bitmap longer than one frame"));
+    }
+    Ok(())
+}
 pub use crate::panel::Region;
 
 /// Smallest byte-aligned box covering every differing byte, or `None` if identical.
