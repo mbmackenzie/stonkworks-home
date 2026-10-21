@@ -113,6 +113,11 @@ class Renderer:
         self._put(self.artwork, url, (self.clock() + (3600 if image else 30), image), 16)
         return image
 
+    def bitmap(self, state):
+        """The mono frame as 48,000 packed bytes: 100 per row, MSB first, 1 = white."""
+        with Image.open(BytesIO(self.frame(state, "mono"))) as image:
+            return image.convert("1", dither=Image.Dither.NONE).tobytes()
+
     def frame(self, state, mode="gray4"):
         with self.lock:
             art = self._art(state.get("artwork_url", ""))
