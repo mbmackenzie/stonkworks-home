@@ -97,6 +97,15 @@ Continue in learning chunks; networking has not started.
 
 ## Planning verification and references
 
+Connection-only learning chunk (2026-10-20): implemented the Wi-Fi, NTP,
+and MQTT 5 TLS subset of Task 3 before Task 2, with user approval. Hardware
+received service availability after verified TLS connection and subscription.
+No command publishing or controller readiness is implemented. Three host
+tests, host Clippy, target network-check Clippy/build, and formatting pass.
+The flash recipe supplies a 3 MB factory partition on the 8 MB board.
+Input checks alongside networking and deliberate failure/recovery checks
+remain pending. Task 2 and the remaining Task 3/4 work are still incomplete.
+
 Only documentation is changed by this plan. Compatibility is checked against
 published documentation; a successful target build and actual board wiring
 checks are implementation deliverables, not claims made here.

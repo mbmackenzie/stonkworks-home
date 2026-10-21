@@ -8,16 +8,17 @@ FastAPI/SoCo backend, browser controller, and Pillow display renderer.
 - `services/sonos-desk/`: source, Dockerfile, pinned dependencies, and tests.
 - `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example.
 - `docs/sonos-desk.md`: HTTP API, rendering, and development instructions.
-- `firmware/sonos-desk/`: Rust input decoding and ESP32-C6 GPIO/USB input check.
+- `firmware/sonos-desk/`: Rust ESP32-C6 input and network diagnostics.
 
 Sonos Desk optionally publishes room state and accepts commands over MQTT 5;
 see [the protocol](protocols/v1/sonos-desk.md) and
 [configuration](docs/sonos-desk.md#optional-mqtt).
 Sonos Desk firmware currently reads buttons and an encoder and prints events
-over USB; see [the firmware walkthrough](firmware/sonos-desk/README.md).
+over USB, with a separate Wi-Fi/NTP/MQTT TLS connection check;
+see [the firmware walkthrough](firmware/sonos-desk/README.md).
 From `firmware/sonos-desk/`, `just firmware-monitor` opens the USB monitor
 after the local tool setup.
-Device networking, Sonos control, display rendering, and Home management
+Device Sonos control, display rendering, and Home management
 are future work. Existing household applications remain outside this project.
 
 ## Run from source

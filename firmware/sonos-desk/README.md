@@ -1,8 +1,9 @@
 # Sonos Desk firmware
 
 Rust firmware is being built in small learning chunks. The portable input
-decoder now has an ESP32-C6 GPIO reader and a USB input-check binary. It only
-prints events: Wi-Fi, MQTT, Sonos commands, and display rendering come later.
+decoder has an ESP32-C6 GPIO reader and a USB input-check binary. A separate
+network-check binary adds Wi-Fi, clock synchronization, and read-only MQTT 5
+over verified TLS. Sonos commands and display rendering come later.
 The input decoder uses the small [`tamer`](https://docs.rs/tamer/0.1.0/) crate
 for debounce and quadrature decoding. The device binary uses ESP-IDF through
 Rust bindings. We keep the mapping to our controls in this repository.
@@ -161,3 +162,79 @@ References checked:
 The first hardware run confirmed all four switch events and volume events
 in both directions, with the display disconnected. The user confirmed the corrected volume direction works on the hardware.
 Hold behavior and reset-with-button-held remain manual acceptance checks. No Sonos commands can be sent by this binary.
+
+## Connection-check chunk
+
+Run `just firmware-build network-check` from this directory to build the
+connection image. `just firmware-build` still builds the input-only image,
+which needs no credentials and does not initialize networking.
+
+Close the USB monitor, then run `just firmware-flash network-check` to flash.
+The flash recipe supplies `partitions.csv` directly to espflash: the board has
+8 MB of flash, with a 3 MB factory app partition for the TLS-enabled image.
+Use this recipe for either image so the bootloader and partition table match.
+Afterward, run `just firmware-monitor` to watch the connection stages.
+
+Copy `config.example.toml` to the ignored `config.local.toml` and fill in the
+Wi-Fi passphrase, broker hostname/port/account, unique client ID, instance,
+and NTP server. Copy the trusted broker CA PEM to `broker-ca.local.pem`.
+The hostname must match the broker certificate; IPv4 addresses require an IP
+subject alternative name in that certificate. This slice accepts DNS names
+or IPv4, WPA2/WPA3 passphrases of 8–63 ASCII bytes, and a dedicated broker
+username/password. Enterprise/open Wi-Fi and mutual TLS are not implemented.
+
+Both files are embedded in the network-check image. Do not share its ELF,
+binary, or build output directory: it contains credentials. Source files and
+examples contain placeholders only. Changing local settings triggers a rebuild.
+`SONOS_DESK_CONFIG_DIR` optionally selects another directory containing the
+same two filenames; it does not change their format.
+
+[`src/config.rs`](src/config.rs) uses Serde/TOML to load settings. Its checks
+reject invalid lengths, broker identifiers, and URI prefixes, and return fixed
+error messages so parser errors cannot quote passwords. There is one small
+configuration test alongside the two input tests; no network test framework.
+
+[`src/network_main.rs`](src/network_main.rs) gives the modem to a separate
+worker and keeps the existing GPIO loop on the main thread.
+[`src/network.rs`](src/network.rs) sequences library services:
+
+1. Connect Wi-Fi and wait for a DHCP address. Wi-Fi settings stay in RAM.
+2. Wait for time from the configured NTP server. Configure a LAN time server
+   to keep normal operation independent of public Internet services.
+3. Connect with MQTT 5 using TLS, CA validation, and hostname verification.
+4. Subscribe at QoS 1 to `stonkworks/v1/sonos-desk/<instance>/availability`.
+
+The MQTT callback queues short status events. It does not print payloads or
+perform blocking work. The owner recreates the client after Wi-Fi/MQTT loss
+or queue overflow with backoff from one to 30 seconds and a small jitter.
+Clean Start and session expiry zero prevent restoring an offline session.
+
+Expected USB status lines are `Wi-Fi: connected; IP address acquired`,
+`Clock: synchronized`, `MQTT: connected over verified TLS`, subscription
+acknowledgment, and service availability received. If time is unavailable,
+TLS is not attempted. Certificate/authentication failures never fall back
+to plaintext or disable verification. Check the preceding stage and broker
+logs if the firmware reports that the network is unavailable.
+
+This is connection diagnostics, not controller readiness. It does not yet
+parse the service session, room inventory, or speaker state, and it never
+publishes commands. Buttons continue to print locally during connection
+attempts. Transport subscription acknowledgment alone is not proof of topic
+permission; receiving service availability verifies the read path.
+
+For the dedicated broker account, this chunk only requires read access to
+`stonkworks/v1/sonos-desk/<instance>/availability`. Additional room/result reads
+and command-topic write permission belong to the controls chunk. Broker
+installation, accounts, certificates, and NTP installation remain separately
+managed household infrastructure.
+
+Manual acceptance: verify Wi-Fi, synchronized clock, verified TLS, subscription,
+and receipt of service availability; keep input logging working throughout.
+Wrong CA/hostname/account and interrupted connections should remain offline
+and retry. Live results are recorded separately from the build/host checks.
+
+Hardware check (2026-10-20): flashed the network image on the ESP32-C6 Zero;
+observed Wi-Fi/DHCP, NTP synchronization, verified TLS MQTT connection,
+subscription acknowledgment, and service availability receipt. The display
+remained disconnected. Input operation alongside networking, deliberate
+connection failures, and reconnect recovery remain manual acceptance checks.

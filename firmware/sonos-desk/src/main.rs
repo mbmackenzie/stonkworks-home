@@ -4,7 +4,8 @@ mod device;
 #[cfg(target_os = "espidf")]
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
-    device::run_inputs()
+    let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take()?;
+    device::run_inputs(peripherals.pins)
 }
 
 #[cfg(not(target_os = "espidf"))]

@@ -1,13 +1,10 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use esp_idf_svc::hal::gpio::{PinDriver, Pull};
-use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::gpio::{PinDriver, Pins, Pull};
 use sonos_desk_firmware::inputs::{Inputs, Levels};
 
-pub fn run_inputs() -> anyhow::Result<()> {
-    let pins = Peripherals::take()?.pins;
-
+pub fn run_inputs(pins: Pins) -> anyhow::Result<()> {
     // Keep the display off. PWR is active-high in Waveshare's driver.
     // Hold the drivers for the lifetime of this loop; dropping resets a pin.
     let mut power = PinDriver::output(pins.gpio4)?;

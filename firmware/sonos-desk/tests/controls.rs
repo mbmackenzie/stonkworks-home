@@ -1,4 +1,27 @@
+use sonos_desk_firmware::config::Config;
 use sonos_desk_firmware::inputs::{InputEvent, Inputs, Levels};
+
+#[test]
+fn configuration_validates_settings_without_exposing_secrets() {
+    let example = include_str!("../config.example.toml");
+    let config = Config::parse(example).expect("valid example");
+    assert_eq!(config.mqtt.port, 8883);
+    assert_eq!(config.mqtt.instance, "main");
+
+    for invalid in [
+        example.replace("YOUR_WIFI_NAME", &"x".repeat(33)),
+        example.replace("CHANGE_ME", "short"),
+        example.replace("8883", "0"),
+        example.replace("desk-controller-01", "desk/#"),
+        example.replace("mqtt.example.test", "mqtt://broker"),
+        example.replace("CHANGE_ME", "do-not-log-this\n[invalid"),
+    ] {
+        let error = Config::parse(&invalid)
+            .err()
+            .expect("invalid settings rejected");
+        assert!(!error.contains("do-not-log-this"));
+    }
+}
 
 #[test]
 fn buttons_require_stable_press_and_release() {

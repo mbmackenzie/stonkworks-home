@@ -14,3 +14,9 @@ target/
 firmware/sonos-desk/.embuild/
 firmware/sonos-desk/sdkconfig
 firmware/sonos-desk/sdkconfig.old
+firmware/sonos-desk/config.local.toml
+firmware/sonos-desk/broker-ca.local.pem
+
+# Household-provided local device settings and CA certificates
+/*.local.json
+/*.crt

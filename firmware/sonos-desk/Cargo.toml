@@ -6,14 +6,24 @@ publish = false
 
 [features]
 input-check = []
+network-check = []
 
 [dependencies]
 tamer = "=0.1.0"
+serde = { version = "1", features = ["derive"] }
+toml = "=0.8.23"
 
 [[bin]]
 name = "input-check"
 path = "src/main.rs"
 required-features = ["input-check"]
+test = false
+bench = false
+
+[[bin]]
+name = "network-check"
+path = "src/network_main.rs"
+required-features = ["network-check"]
 test = false
 bench = false
 

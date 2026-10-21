@@ -1208,7 +1208,9 @@ dependencies = [
  "anyhow",
  "embuild",
  "esp-idf-svc",
+ "serde",
  "tamer",
+ "toml",
 ]
 
 [[package]]

@@ -10,8 +10,9 @@ network settings, and device assignments.
 The current implementation is the Sonos Desk source extraction: a FastAPI/SoCo
 backend, browser controller, Pillow e-ink renderer, and optional MQTT 5 adapter.
 Rust firmware in `firmware/sonos-desk/` has a library-backed input decoder and
-an ESP32-C6 GPIO/USB input-check binary. Networking, Sonos control, and display
-rendering on the device are not implemented.
+an ESP32-C6 GPIO/USB input-check binary. A separate connection-check binary
+connects Wi-Fi, synchronizes NTP, and reads MQTT availability over verified TLS.
+Sonos control and display rendering on the device are not implemented.
 Home management, device configuration contracts, device onboarding,
 registry releases, and Pi packaging are future work. Do not describe them as implemented or scaffold empty subsystems.
 
@@ -54,7 +55,7 @@ current source and documentation to establish implemented behavior.
 - `services/sonos-desk/tests/`: simulated-speaker API, backend, and renderer
   tests; optional Playwright browser check and disposable-broker MQTT checks.
 - `protocols/v1/`: implemented Sonos MQTT topics, message schemas, and client usage.
-- `firmware/sonos-desk/`: Rust input logic, ESP32-C6 USB input-check binary,
+- `firmware/sonos-desk/`: Rust input logic, ESP32-C6 input/network diagnostics,
   build instructions, and a small host test suite. From that directory,
   `just firmware-monitor` opens USB monitoring using the project-local espflash tool.
 - `deploy/stacks/sonos-desk/`: portable Linux host-network Compose example, optional
