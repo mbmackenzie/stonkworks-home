@@ -6,7 +6,17 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use esp_idf_svc::hal::gpio::{PinDriver, Pins, Pull};
+use esp_idf_svc::hal::gpio::{self, PinDriver, Pins, Pull};
+
+pub struct InputPins {
+    pub previous: gpio::Gpio3<'static>,
+    pub play_pause: gpio::Gpio5<'static>,
+    pub next: gpio::Gpio17<'static>,
+    pub mute: gpio::Gpio2<'static>,
+    pub a: gpio::Gpio0<'static>,
+    pub b: gpio::Gpio1<'static>,
+}
+
 use sonos_desk_firmware::inputs::{InputEvent, Inputs, Levels};
 
 pub struct InputSink {
@@ -31,13 +41,32 @@ pub fn run_inputs(pins: Pins, start: Instant, sink: Option<InputSink>) -> anyhow
     cs.set_high()?;
     let _busy = PinDriver::input(pins.gpio14, Pull::Floating)?;
 
+    run_control_inputs(
+        InputPins {
+            previous: pins.gpio3,
+            play_pause: pins.gpio5,
+            next: pins.gpio17,
+            mute: pins.gpio2,
+            a: pins.gpio0,
+            b: pins.gpio1,
+        },
+        start,
+        sink,
+    )
+}
+
+pub fn run_control_inputs(
+    pins: InputPins,
+    start: Instant,
+    sink: Option<InputSink>,
+) -> anyhow::Result<()> {
     // Pull-ups hold inputs high until a switch connects them to ground.
-    let previous = PinDriver::input(pins.gpio3, Pull::Up)?;
-    let play_pause = PinDriver::input(pins.gpio5, Pull::Up)?;
-    let next = PinDriver::input(pins.gpio17, Pull::Up)?;
-    let mute = PinDriver::input(pins.gpio2, Pull::Up)?;
-    let a = PinDriver::input(pins.gpio0, Pull::Up)?;
-    let b = PinDriver::input(pins.gpio1, Pull::Up)?;
+    let previous = PinDriver::input(pins.previous, Pull::Up)?;
+    let play_pause = PinDriver::input(pins.play_pause, Pull::Up)?;
+    let next = PinDriver::input(pins.next, Pull::Up)?;
+    let mute = PinDriver::input(pins.mute, Pull::Up)?;
+    let a = PinDriver::input(pins.a, Pull::Up)?;
+    let b = PinDriver::input(pins.b, Pull::Up)?;
 
     let read = || Levels {
         previous: previous.is_low(),

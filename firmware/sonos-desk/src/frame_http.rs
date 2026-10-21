@@ -1,27 +1,25 @@
-use esp_idf_svc::{
-    hal::modem::Modem,
-    http::{
-        Method,
-        client::{Configuration, EspHttpConnection, FollowRedirectsPolicy},
-    },
+use esp_idf_svc::http::{
+    Method,
+    client::{Configuration, EspHttpConnection, FollowRedirectsPolicy},
 };
 use sonos_desk_firmware::{config::Config, frame::MAX_PNG_BYTES};
 use std::time::{Duration, Instant};
 
-pub fn fetch(modem: Modem<'static>, config: &Config) -> anyhow::Result<Vec<u8>> {
+pub struct Response {
+    pub png: Option<Vec<u8>>,
+    pub etag: Option<String>,
+}
+
+/// Use the network task's existing connection; never change Wi-Fi state here.
+pub fn fetch_connected(config: &Config, etag: Option<&str>) -> anyhow::Result<Response> {
     let base = config
         .http_base_url
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("Set http_base_url in local configuration"))?;
+        .ok_or_else(|| anyhow::anyhow!("Set http_base_url"))?;
     let room = config
         .room_id
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("Set room_id in local configuration"))?;
-    let mut wifi = crate::wifi::start(modem, &config.wifi)?;
-    println!("Wi-Fi: connecting for one frame request");
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
-    println!("Wi-Fi: connected; fetching selected room's mono frame");
+        .ok_or_else(|| anyhow::anyhow!("Set room_id"))?;
     // IDs are validated URL-safe characters; no credentials or assignments in logs.
     let url = format!("{}/frame?room={room}&mode=mono", base.trim_end_matches('/'));
     let mut http = EspHttpConnection::new(&Configuration {
@@ -30,8 +28,25 @@ pub fn fetch(modem: Modem<'static>, config: &Config) -> anyhow::Result<Vec<u8>> 
         buffer_size: Some(1024),
         ..Default::default()
     })?;
-    http.initiate_request(Method::Get, &url, &[("Accept", "image/png")])?;
+    let mut headers = vec![("Accept", "image/png")];
+    if let Some(tag) = etag {
+        headers.push(("If-None-Match", tag));
+    }
+    http.initiate_request(Method::Get, &url, &headers)?;
     http.initiate_response()?;
+    if http.status() == 304 {
+        anyhow::ensure!(etag.is_some(), "Unexpected HTTP 304");
+        return Ok(Response {
+            png: None,
+            etag: None,
+        });
+    }
+    let response_etag = http
+        .header("ETag")
+        .filter(|tag| {
+            tag.len() <= 128 && tag.is_ascii() && !tag.bytes().any(|b| b < 32 || b == 127)
+        })
+        .map(str::to_owned);
     anyhow::ensure!(
         http.status() == 200,
         "Frame service returned HTTP {}",
@@ -78,9 +93,9 @@ pub fn fetch(modem: Modem<'static>, config: &Config) -> anyhow::Result<Vec<u8>> 
         "Truncated frame response"
     );
     bytes.shrink_to_fit();
-    println!(
-        "HTTP: received {} PNG bytes; closing Wi-Fi before decode",
-        bytes.len()
-    );
-    Ok(bytes) // HTTP and Wi-Fi drivers drop here, freeing their buffers before PNG decoding.
+    println!("HTTP: received {} PNG bytes", bytes.len());
+    Ok(Response {
+        png: Some(bytes),
+        etag: response_etag,
+    })
 }

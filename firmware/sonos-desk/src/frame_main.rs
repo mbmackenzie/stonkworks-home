@@ -18,7 +18,16 @@ fn main() -> anyhow::Result<()> {
                 let config =
                     Config::parse(include_str!(concat!(env!("OUT_DIR"), "/config.local.toml")))
                         .map_err(|message| anyhow::anyhow!("{message}"))?;
-                let bytes = frame_http::fetch(peripherals.modem, &config)?;
+                let bytes = {
+                    let mut wifi = wifi::start(peripherals.modem, &config.wifi)?;
+                    wifi.connect()?;
+                    wifi.wait_netif_up()?;
+                    let response = frame_http::fetch_connected(&config, None)?;
+                    drop(response.etag);
+                    response
+                        .png
+                        .ok_or_else(|| anyhow::anyhow!("Unexpected HTTP 304"))?
+                }; // Close Wi-Fi before decoding the diagnostic frame.
                 let frame =
                     frame::decode_png(&bytes).map_err(|message| anyhow::anyhow!("{message}"))?;
                 println!("PNG: validated 800x480 mono frame; ready for display");

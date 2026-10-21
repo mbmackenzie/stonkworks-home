@@ -20,7 +20,8 @@ From `firmware/sonos-desk/`, `just firmware-monitor` opens the USB monitor
 after the local tool setup.
 The `display-check` firmware draws a fixed e-ink test pattern.
 The `frame-check` image fetches and displays one monochrome Sonos frame over HTTP.
-Automatic display updates and Home management are future work. Existing household applications remain outside this project.
+The controller also checks for changed frames every three minutes while MQTT controls run.
+Home management is future work. Existing household applications remain outside this project.
 
 ## Run from source
 

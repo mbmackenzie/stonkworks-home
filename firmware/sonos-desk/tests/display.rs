@@ -152,3 +152,24 @@ fn frame_decoder_accepts_only_complete_mono_frames() {
     assert!(decode_png(&encode(800, 480, &pixels)).is_err()); // gray4 is not mono.
     assert!(decode_png(&vec![0; 128 * 1024 + 1]).is_err());
 }
+
+#[cfg(feature = "frame-check")]
+#[test]
+fn refresh_waits_and_only_caches_displayed_frames() {
+    use sonos_desk_firmware::frame::Refresh;
+    let mut refresh = Refresh::default();
+    assert!(refresh.due(0));
+    assert_eq!(refresh.etag(0), None);
+    refresh.checked(0); // Failed fetch/decode: no new ETag or immediate retry.
+    assert!(!refresh.due(179_999));
+    assert!(refresh.due(180_000));
+    refresh.rendered(Some("\"first\"".into()), 180_000);
+    refresh.checked(180_000);
+    assert_eq!(refresh.etag(360_000), Some("\"first\""));
+    refresh.checked(360_000); // 304 or failed replacement retains displayed ETag.
+    assert_eq!(refresh.etag(540_000), Some("\"first\""));
+    assert!(!refresh.due(539_999));
+    assert!(refresh.due(540_000));
+    assert_eq!(refresh.etag(86_579_999), Some("\"first\""));
+    assert_eq!(refresh.etag(86_580_000), None); // Force a full refresh after a day.
+}

@@ -21,6 +21,7 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
         gate: gate.clone(),
         sender,
     });
+    let network_gate = gate.clone();
     std::thread::Builder::new()
         .name("network".into())
         .stack_size(16 * 1024)
@@ -32,7 +33,7 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
                         return;
                     }
                     let io = controls.then_some(network::ControlIo {
-                        gate,
+                        gate: network_gate,
                         receiver,
                         start,
                     });
@@ -43,5 +44,49 @@ pub fn run(controls: bool) -> anyhow::Result<()> {
                 Err(message) => println!("Network configuration: {message}"),
             }
         })?;
+    #[cfg(feature = "controller")]
+    if controls {
+        let p = peripherals.pins;
+        let input_pins = device::InputPins {
+            previous: p.gpio3,
+            play_pause: p.gpio5,
+            next: p.gpio17,
+            mute: p.gpio2,
+            a: p.gpio0,
+            b: p.gpio1,
+        };
+        let display_pins = crate::display::DisplayPins {
+            power: p.gpio4,
+            reset: p.gpio22,
+            dc: p.gpio20,
+            busy: p.gpio14,
+            clock: p.gpio19,
+            data: p.gpio18,
+            cs: p.gpio21,
+        };
+        std::thread::Builder::new()
+            .name("display".into())
+            .stack_size(24 * 1024)
+            .spawn(move || {
+                let result = (|| -> anyhow::Result<()> {
+                    let panel = crate::display::Panel::new(peripherals.spi2, display_pins)?;
+                    let config =
+                        Config::parse(include_str!(concat!(env!("OUT_DIR"), "/config.local.toml")))
+                            .map_err(|message| anyhow::anyhow!("{message}"))?;
+                    if config.http_base_url.is_none() {
+                        println!("Display: no http_base_url configured; disabled");
+                        loop {
+                            std::thread::park();
+                        }
+                    }
+                    crate::updater::run(panel, config, gate);
+                    Ok(())
+                })();
+                if result.is_err() {
+                    println!("Display: setup failed; controls continue");
+                }
+            })?;
+        return device::run_control_inputs(input_pins, start, sink);
+    }
     device::run_inputs(peripherals.pins, start, sink)
 }

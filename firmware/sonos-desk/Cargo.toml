@@ -7,7 +7,7 @@ publish = false
 [features]
 input-check = []
 network-check = []
-controller = []
+controller = ["frame-check"]
 display-check = ["dep:ssd1677", "dep:embedded-hal"]
 frame-check = ["display-check", "dep:png"]
 

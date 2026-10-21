@@ -68,3 +68,32 @@ pub fn decode_png(bytes: &[u8]) -> Result<Frame, &'static str> {
         .try_into()
         .map_err(|_| "Invalid framebuffer size")
 }
+
+/// Cache only the ETag of an image actually shown on the panel.
+#[derive(Default)]
+pub struct Refresh {
+    next_check: u64,
+    displayed_at: u64,
+    etag: Option<String>,
+}
+
+impl Refresh {
+    pub fn due(&self, now_ms: u64) -> bool {
+        now_ms >= self.next_check
+    }
+
+    pub fn checked(&mut self, now_ms: u64) {
+        self.next_check = now_ms.saturating_add(180_000);
+    }
+
+    pub fn etag(&self, now_ms: u64) -> Option<&str> {
+        (now_ms.saturating_sub(self.displayed_at) < 86_400_000)
+            .then_some(self.etag.as_deref())
+            .flatten()
+    }
+
+    pub fn rendered(&mut self, etag: Option<String>, now_ms: u64) {
+        self.etag = etag;
+        self.displayed_at = now_ms;
+    }
+}

@@ -4,7 +4,8 @@ Rust firmware is being built in small learning chunks. The portable input
 decoder has an ESP32-C6 GPIO reader and a USB input-check binary. A separate
 network-check binary adds Wi-Fi, clock synchronization, and read-only MQTT 5
 over verified TLS. The controller binary sends Sonos commands from physical
-inputs. A separate display-check binary draws one fixed black/white pattern.
+inputs and periodically updates the display when `http_base_url` is configured.
+A separate display-check binary draws one fixed black/white pattern.
 A separate frame-check binary fetches and displays one monochrome Sonos frame.
 The input decoder uses the small [`tamer`](https://docs.rs/tamer/0.1.0/) crate
 for debounce and quadrature decoding. The device binary uses ESP-IDF through
@@ -407,7 +408,8 @@ partial updates, and simultaneous display
 refresh with MQTT controls are not implemented in this chunk.
 
 To restore physical Sonos controls, close the monitor, then run
-`just firmware-flash controller`. That image keeps the display powered off.
+`just firmware-flash controller`. With `http_base_url` configured, that image also
+updates the display as described below.
 
 
 ## One Sonos frame over HTTP
@@ -442,9 +444,49 @@ on the C6 and exhausted its heap. The replacement uses bounded row buffers.
 One focused decoder test checks packing, malformed input, format rejection,
 and a 64 KiB maximum individual allocation for its fixture. All nine host
 tests pass; that allocation guard does not measure total device memory use.
-Automatic refresh, ETags, grayscale and simultaneous MQTT/display operation
-remain separate work.
+This diagnostic remains one-shot. The controller adds periodic refresh below;
+grayscale and partial updates remain separate work.
 
 Hardware run (2026-10-21): the C6 fetched a 9,640-byte real Sonos frame,
 disconnected Wi-Fi, validated the PNG, and reported completed refresh, panel
-sleep, and power-off without timeout or allocation failure. The user confirmed the Sonos artwork and text are upright and complete. The frame-check image remains on the board.
+sleep, and power-off without timeout or allocation failure. The user confirmed the Sonos artwork and text are upright and complete. That run used the frame-check image.
+
+
+## Controls with periodic display updates
+
+Build and flash `controller` using the existing justfile commands. Set the
+optional `http_base_url` and existing `room_id` in local configuration to enable
+the display. Omitting the HTTP origin keeps the panel off and controls available.
+The diagnostic images retain their previous roles.
+
+The display worker waits for fresh MQTT controller readiness before its first
+fetch, then checks three minutes after each completed attempt. It shares the
+network worker's Wi-Fi connection and never starts or stops Wi-Fi. HTTP, PNG
+row decoding, SPI transfer and BUSY waits run separately from MQTT/input handling.
+Only the display task owns the display pins; the input loop owns the controls.
+
+`If-None-Match` carries the ETag of the last successfully displayed frame.
+HTTP 304 skips decoding and panel power-up. Fetch/decode failures retain that
+ETag and the old image, then wait for the next interval. A new ETag is saved
+only after refresh and power-off succeed. A full fetch/refresh is forced after
+24 hours even if the image is unchanged. Each refresh sleeps and powers off
+the panel. Panel/SPI failure disables display updates until reset, leaving
+controls running. No image queue or automatic replay of Sonos commands is added.
+
+The three-minute spacing follows the
+[panel manual](https://www.waveshare.com/wiki/3.97inch_e-Paper_HAT%2B_Manual)'s
+recommendation for full refresh. This is a slow now-playing display: track, volume, and playback changes
+can take up to a polling interval to appear. Physical commands still run through
+the existing MQTT path. Faster partial updates require a separate panel experiment.
+
+The ten host tests include one focused timing/cache scenario in addition to the
+existing input, command, panel and PNG tests.
+
+Hardware acceptance (2026-10-21): the combined controller reached MQTT readiness,
+fetched and drew the first frame with Wi-Fi/MQTT still active, then fetched a
+changed frame and refreshed again after the three-minute interval. Both refreshes
+completed sleep/power-off without allocation failure or timeout. The user confirmed
+controls work and the automatic screen update appeared. Volume, play/pause, mute
+and next commands logged successful results between refreshes. HTTP 304 handling
+and the daily force-refresh are implemented; those paths were not observed during
+this short hardware run. The combined controller remains flashed; monitor closed.
